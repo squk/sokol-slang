@@ -1,0 +1,28 @@
+# sokol-slang
+
+Compile Slang into a Sokol header with backend shaders, buffer structs, and
+binding constants. Applications need only the header and Sokol.
+
+Alpha: APIs and metadata may change. Windows/D3D11 and iOS execution are unverified.
+
+## Build
+
+Requires C++20, Python 3, Meson 1.1+, and Ninja. Tests also use `glslangValidator`.
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+## Compile
+
+```sh
+python3 tools/sokol-slang examples/portable/shader.slang \
+  --metadata examples/portable/metadata.json -o build/portable.h
+```
+
+Tools are discovered automatically; override with `--slangc` or `--core`.
+Use `--targets` to select backends and `-I` for imports/includes.
+
+[Examples](examples/README.md) · [Docker tests](docs/reference.md#docker) · [Reference](docs/reference.md)

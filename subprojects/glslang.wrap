@@ -1,0 +1,6 @@
+[wrap-file]
+directory = glslang-ba1640446f3826a518721d1f083f3a8cca1120c3
+source_url = https://codeload.github.com/KhronosGroup/glslang/tar.gz/ba1640446f3826a518721d1f083f3a8cca1120c3
+source_filename = glslang-proof.tar.gz
+source_hash = 406315c7b52e107f48d289447051a3e63d2ccc24a1f119b1474f2eb9f0934c9f
+patch_directory = glslang

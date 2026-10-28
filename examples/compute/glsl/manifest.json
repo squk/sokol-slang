@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "module": "compute",
+  "program": "run",
+  "stages": {"compute": {"file": "generic_compute.spv", "entry": "main"}},
+  "resources": [
+    {"stage": "compute", "set": 3, "binding": 5, "name": "compute_params", "kind": "uniform", "slot": 2},
+    {"stage": "compute", "set": 2, "binding": 9, "name": "compute_sourceRecords", "kind": "storage_buffer", "slot": 3, "access": "read"},
+    {"stage": "compute", "set": 1, "binding": 4, "name": "compute_resultRecords", "kind": "storage_buffer", "slot": 7, "access": "read_write"}
+  ]
+}

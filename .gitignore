@@ -1,0 +1,7 @@
+/build*/
+/deps/
+__pycache__/
+
+/subprojects/*/
+!/subprojects/packagefiles/
+/subprojects/.wraplock

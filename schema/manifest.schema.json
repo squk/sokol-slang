@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sokol SPIR-V program manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "module",
+    "program",
+    "stages",
+    "resources"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "module": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
+      "maxLength": 100
+    },
+    "program": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
+      "maxLength": 100
+    },
+    "clip_depth": {
+      "const": "zero_to_one"
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vertex": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "entry"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entry": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "fragment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "entry"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entry": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "compute": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "entry"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entry": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "vertex",
+            "fragment"
+          ],
+          "maxProperties": 2
+        },
+        {
+          "required": [
+            "compute"
+          ],
+          "maxProperties": 1
+        }
+      ]
+    },
+    "resources": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "set",
+          "binding",
+          "name",
+          "kind",
+          "slot"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "vertex",
+              "fragment",
+              "compute"
+            ]
+          },
+          "set": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "binding": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
+            "maxLength": 100
+          },
+          "kind": {
+            "enum": [
+              "uniform",
+              "storage_buffer",
+              "storage_image",
+              "texture",
+              "sampler"
+            ]
+          },
+          "slot": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "sample_type": {
+            "enum": [
+              "float",
+              "unfilterable_float",
+              "depth",
+              "sint",
+              "uint"
+            ]
+          },
+          "sampler_type": {
+            "enum": [
+              "filtering",
+              "nonfiltering",
+              "comparison"
+            ]
+          },
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "read_write"
+            ]
+          },
+          "format": {
+            "enum": [
+              "rgba8", "rgba8_snorm", "rgba8ui", "rgba8i",
+              "rgba16ui", "rgba16i", "rgba16f",
+              "r32ui", "r32i", "r32f",
+              "rg32ui", "rg32i", "rg32f",
+              "rgba32ui", "rgba32i", "rgba32f"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

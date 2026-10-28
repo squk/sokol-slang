@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "module": "portable",
+  "program": "draw",
+  "clip_depth": "zero_to_one",
+  "stages": {
+    "vertex": {"file": "generic_vertex.spv", "entry": "main"},
+    "fragment": {"file": "generic_fragment.spv", "entry": "main"}
+  },
+  "resources": [
+    {"stage": "vertex", "set": 3, "binding": 7, "name": "vertex_params", "kind": "uniform", "slot": 2},
+    {"stage": "fragment", "set": 5, "binding": 9, "name": "fragment_params", "kind": "uniform", "slot": 6},
+    {"stage": "fragment", "set": 5, "binding": 11, "name": "fragment_tex", "kind": "texture", "slot": 5, "sample_type": "float"},
+    {"stage": "fragment", "set": 5, "binding": 13, "name": "fragment_smp", "kind": "sampler", "slot": 3, "sampler_type": "filtering"}
+  ]
+}

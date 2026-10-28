@@ -1,0 +1,36 @@
+{
+  "module": "proof",
+  "program": "draw",
+  "vertex": "vertexMain",
+  "fragment": "fragmentMain",
+  "resources": {
+    "params": {
+      "kind": "uniform",
+      "slots": {
+        "vertex": 0,
+        "fragment": 1
+      }
+    },
+    "records": {
+      "kind": "storage_buffer",
+      "slots": {
+        "vertex": 0,
+        "fragment": 2
+      }
+    },
+    "tex": {
+      "kind": "texture",
+      "sample_type": "float",
+      "slots": {
+        "fragment": 1
+      }
+    },
+    "smp": {
+      "kind": "sampler",
+      "sampler_type": "filtering",
+      "slots": {
+        "fragment": 0
+      }
+    }
+  }
+}

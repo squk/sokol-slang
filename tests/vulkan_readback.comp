@@ -1,0 +1,13 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+// Native readback helper, compiled directly by glslang independently of the adapter.
+// Sokol's Vulkan images support sampling but not copy-source usage at this pin.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform texture2D source;
+layout(set = 0, binding = 1, std430) writeonly buffer Pixels { uint pixels[]; };
+void main() {
+    ivec2 position = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = textureSize(source, 0);
+    if (all(lessThan(position, size)))
+        pixels[position.y * size.x + position.x] = packUnorm4x8(texelFetch(source, position, 0));
+}

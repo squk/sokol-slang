@@ -1,0 +1,7 @@
+[wrap-file]
+directory = slang-macos-x86_64-2026.20
+source_url = https://github.com/shader-slang/slang/releases/download/v2026.20/slang-2026.20-macos-x86_64.tar.gz
+source_filename = slang-2026.20-macos-x86_64.tar.gz
+source_hash = b4f01f615dc625f60c593d7d0a4bbd38e05dfa2a34bfd3973017c309d866feaa
+lead_directory_missing = true
+patch_directory = slang

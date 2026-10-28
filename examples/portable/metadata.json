@@ -1,0 +1,9 @@
+{
+  "module": "portable", "program": "draw",
+  "vertex": "vertexMain", "fragment": "fragmentMain",
+  "resources": {
+    "params": {"kind": "uniform", "slots": {"vertex": 0, "fragment": 1}},
+    "tex": {"kind": "texture", "slots": {"fragment": 0}, "sample_type": "float"},
+    "smp": {"kind": "sampler", "slots": {"fragment": 0}, "sampler_type": "filtering"}
+  }
+}

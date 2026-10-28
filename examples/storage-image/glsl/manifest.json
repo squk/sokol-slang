@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "module": "storage_image",
+  "program": "run",
+  "stages": {"compute": {"file": "generic_storage_image.spv", "entry": "main"}},
+  "resources": [
+    {"name": "compute_params", "stage": "compute", "set": 3, "binding": 5, "kind": "uniform", "slot": 2},
+    {"name": "compute_colors", "stage": "compute", "set": 2, "binding": 6, "kind": "storage_image", "slot": 5, "format": "rgba8", "access": "write"},
+    {"name": "compute_counters", "stage": "compute", "set": 1, "binding": 4, "kind": "storage_image", "slot": 9, "format": "r32ui", "access": "read_write"},
+    {"name": "compute_resultRecords", "stage": "compute", "set": 2, "binding": 9, "kind": "storage_buffer", "slot": 7, "access": "read_write"}
+  ]
+}

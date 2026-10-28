@@ -1,0 +1,6 @@
+[wrap-file]
+directory = sokol-efeb77603e24daea7d1dd6445b9358bb5d82533b
+source_url = https://codeload.github.com/floooh/sokol/tar.gz/efeb77603e24daea7d1dd6445b9358bb5d82533b
+source_filename = sokol-proof.tar.gz
+source_hash = 0500b6bf1e10e35a85c28435ec27bb06dbad0948536e5ea37554453842aa0f0f
+patch_directory = sokol

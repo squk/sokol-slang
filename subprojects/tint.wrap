@@ -1,0 +1,6 @@
+[wrap-file]
+directory = tint-extract-3580073338aa435a9e6a2cea8f30b8beb05e030f
+source_url = https://codeload.github.com/floooh/tint-extract/tar.gz/3580073338aa435a9e6a2cea8f30b8beb05e030f
+source_filename = tint-platforms.tar.gz
+source_hash = 51bb0c0a6e69a5d74fc76fc9c8515fc91e5d062233c1b65e03818ceb82dde18c
+patch_directory = tint

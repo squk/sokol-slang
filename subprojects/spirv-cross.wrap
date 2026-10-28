@@ -1,0 +1,6 @@
+[wrap-file]
+directory = SPIRV-Cross-68300dc07ac3dc592dbbdb87e02d5180f984ad12
+source_url = https://codeload.github.com/KhronosGroup/SPIRV-Cross/tar.gz/68300dc07ac3dc592dbbdb87e02d5180f984ad12
+source_filename = spirv-cross-proof.tar.gz
+source_hash = 55d9723b95c4d9955a95fbd9130ad21dcb1e8448d1f60abb02b216216aeca3cd
+patch_directory = spirv-cross

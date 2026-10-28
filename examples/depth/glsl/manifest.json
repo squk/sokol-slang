@@ -1,0 +1,12 @@
+{
+  "version": 1, "module": "depth", "program": "draw", "clip_depth": "zero_to_one",
+  "stages": {
+    "vertex": {"file": "generic_depth.vert.spv", "entry": "main"},
+    "fragment": {"file": "generic_depth.frag.spv", "entry": "main"}
+  },
+  "resources": [
+    {"stage": "fragment", "set": 3, "binding": 12, "name": "fragment_shadow", "kind": "texture", "slot": 3, "sample_type": "depth"},
+    {"stage": "fragment", "set": 3, "binding": 7, "name": "fragment_lessSmp", "kind": "sampler", "slot": 2, "sampler_type": "comparison"},
+    {"stage": "fragment", "set": 3, "binding": 1, "name": "fragment_greaterSmp", "kind": "sampler", "slot": 8, "sampler_type": "comparison"}
+  ]
+}

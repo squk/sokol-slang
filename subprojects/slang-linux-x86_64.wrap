@@ -1,0 +1,7 @@
+[wrap-file]
+directory = slang-linux-x86_64-2026.20
+source_url = https://github.com/shader-slang/slang/releases/download/v2026.20/slang-2026.20-linux-x86_64-glibc-2.28.tar.gz
+source_filename = slang-2026.20-linux-x86_64-glibc-2.28.tar.gz
+source_hash = 84ebd777968caceea26b21bfd014341078be6047be6c5a963a69f984f896cebd
+lead_directory_missing = true
+patch_directory = slang

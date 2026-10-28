@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 4) in;
+layout(set = 3, binding = 5, std140) uniform Params { ivec4 control; } params;
+layout(set = 2, binding = 6, rgba8) uniform writeonly image2D colors;
+layout(set = 1, binding = 4, r32ui) uniform uimage2D counters;
+struct Record { uint value; uint marker; };
+layout(set = 2, binding = 9, std430) buffer Records { Record records[]; } resultRecords;
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    if (id.x >= uint(params.control.x) || id.y >= uint(params.control.y)) return;
+    uint index = id.x + id.y * uint(params.control.x);
+    ivec2 position = ivec2(id.xy);
+    if (params.control.z == 0) {
+        imageStore(counters, position, uvec4(index * 3 + 7));
+        imageStore(colors, position, vec4(float(id.x) / 16, float(id.y) / 16, 0.5, 1));
+    } else {
+        uint value = imageLoad(counters, position).x;
+        imageStore(counters, position, uvec4(value + uint(params.control.w)));
+        resultRecords.records[index].value = value;
+        resultRecords.records[index].marker = value + uint(params.control.w);
+    }
+}

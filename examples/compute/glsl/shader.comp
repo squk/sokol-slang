@@ -1,0 +1,14 @@
+#version 450
+layout(local_size_x = 32, local_size_y = 2, local_size_z = 1) in;
+struct Record { uint value; uint marker; };
+layout(set = 3, binding = 5, std140) uniform Params { ivec4 control; } params;
+layout(set = 2, binding = 9, std430) readonly buffer Source { Record records[]; } sourceRecords;
+layout(set = 1, binding = 4, std430) buffer Result { Record records[]; } resultRecords;
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    uint index = id.x + id.y * 64;
+    if (index < uint(params.control.x)) {
+        resultRecords.records[index].value = sourceRecords.records[index].value * uint(params.control.y) + uint(params.control.z);
+        resultRecords.records[index].marker = sourceRecords.records[index].marker ^ (id.x + (id.y << 16));
+    }
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sokol shader backend test</title>
+<canvas id="canvas" width="64" height="64"></canvas>
+<script>
+  const output = [];
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: line => output.push(String(line)),
+    printErr: line => output.push(String(line)),
+    onExit: status => globalThis.testResult = { status, output },
+    reportTestResult: status => globalThis.testResult = { status, output },
+    onAbort: reason => globalThis.testResult = { status: 1, output: [...output, String(reason)] },
+  };
+  addEventListener('error', event => {
+    globalThis.testResult = { status: 1, output: [...output, event.message] };
+  });
+  addEventListener('unhandledrejection', event => {
+    globalThis.testResult = { status: 1, output: [...output, String(event.reason)] };
+  });
+</script>
+{{{ SCRIPT }}}

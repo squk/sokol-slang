@@ -1,0 +1,6 @@
+[wrap-file]
+directory = SPIRV-Headers-7c2f5333e9c662620581361dffc327a99800bb52
+source_url = https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/7c2f5333e9c662620581361dffc327a99800bb52
+source_filename = spirv-headers-platforms.tar.gz
+source_hash = 5e5dca0d1d098a8793ef6d4bc0de86373d105cc4523776e84f0394881bb6372f
+patch_directory = spirv-headers

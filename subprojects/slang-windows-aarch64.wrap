@@ -1,0 +1,7 @@
+[wrap-file]
+directory = slang-windows-aarch64-2026.20
+source_url = https://github.com/shader-slang/slang/releases/download/v2026.20/slang-2026.20-windows-aarch64.tar.gz
+source_filename = slang-2026.20-windows-aarch64.tar.gz
+source_hash = b5802a24e810b2b82e18cc796166692b4431431b66a65b108d111b668a920e7c
+lead_directory_missing = true
+patch_directory = slang

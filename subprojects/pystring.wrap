@@ -1,0 +1,6 @@
+[wrap-file]
+directory = pystring-c5ca4f569d7d99ed42dfc54130f9cabd183ec657
+source_url = https://codeload.github.com/imageworks/pystring/tar.gz/c5ca4f569d7d99ed42dfc54130f9cabd183ec657
+source_filename = pystring-proof.tar.gz
+source_hash = 3ccb200de50edbdcf32881db05c756ffa7a261cddaa387b0be0571453c2ed2af
+patch_directory = pystring

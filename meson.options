@@ -1,0 +1,4 @@
+option('slangc', type: 'string', value: '', description: 'Build-machine Slang 2026.20 compiler; empty selects the pinned package')
+
+option('slang', type: 'boolean', value: true, description: 'Build and install sokol-slang, with Slang examples and tests')
+option('browser', type: 'string', value: '', description: 'Chromium executable for Emscripten WebGL/WebGPU rendering tests')
