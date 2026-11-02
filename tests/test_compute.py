@@ -16,11 +16,11 @@ def main():
     parser.add_argument('--glslang', required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    original = json.loads((root / 'examples/compute/glsl/manifest.json').read_text())
+    original = json.loads((root / 'tests/fixtures/compute/glsl/manifest.json').read_text())
     with tempfile.TemporaryDirectory(prefix='sokol compute ') as directory:
         work = Path(directory)
         binary = work / 'generic_compute.spv'
-        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'examples/compute/glsl/shader.comp'), '-o', str(binary)])
+        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'tests/fixtures/compute/glsl/shader.comp'), '-o', str(binary)])
         spirv = binary.read_bytes()
         inspected = json.loads(run([args.core, '--inspect', str(binary)]))
         assert inspected['entries'] == [{'name': 'main', 'stage': 'compute'}]

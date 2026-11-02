@@ -121,8 +121,8 @@ def main():
         (includes / 'constants.slang').unlink()
         run(combined, metadata, error='constants.slang', extra_args=search_args)
 
-        compute_source = (root / 'examples/compute/shader.slang').read_text()
-        compute_meta = json.loads((root / 'examples/compute/metadata.json').read_text())
+        compute_source = (root / 'tests/fixtures/compute/shader.slang').read_text()
+        compute_meta = json.loads((root / 'tests/fixtures/compute/metadata.json').read_text())
         target_index = command.index('--targets')
         del command[target_index:target_index + 2]
         emitted = work / 'compute-spirv'

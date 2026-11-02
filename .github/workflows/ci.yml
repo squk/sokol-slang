@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (GCC / Mesa GL & Vulkan)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates g++ meson ninja-build pkg-config python3 glslang-tools \
+            libegl-dev libegl-mesa0 libgles-dev libgl-dev libgl1-mesa-dri \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers vulkan-validationlayers \
+            libx11-dev libxi-dev libxcursor-dev xvfb xauth \
+            g++-mingw-w64-x86-64 ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: linux-${{ runner.os }}
+
+      - name: Configure full build (Slang + GLSL)
+        run: meson setup build
+
+      - name: Compile full build
+        run: meson compile -C build
+
+      - name: Run test suite (Mesa GL/GLES/Vulkan with Xvfb)
+        run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a meson test -C build --print-errorlogs
+
+      - name: Configure core-only build (-Dslang=false)
+        run: meson setup build-core -Dslang=false
+
+      - name: Compile core-only build
+        run: meson compile -C build-core
+
+      - name: Run core-only test suite
+        run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a meson test -C build-core --print-errorlogs
+
+      - name: Cross-compile MinGW-w64 Windows fixtures
+        run: |
+          meson setup build-mingw --cross-file tests/mingw.ini
+          meson compile -C build-mingw
+
+  macos:
+    name: macOS (Clang / Metal & OpenGL)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install meson ninja glslang ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-${{ runner.os }}
+
+      - name: Configure full build (Slang + Metal + OpenGL)
+        run: meson setup build
+
+      - name: Compile full build
+        run: meson compile -C build
+
+      - name: Run test suite
+        run: meson test -C build --print-errorlogs
+
+      - name: Configure core-only build (-Dslang=false)
+        run: meson setup build-core -Dslang=false
+
+      - name: Compile core-only build
+        run: meson compile -C build-core
+
+      - name: Run core-only test suite
+        run: meson test -C build-core --print-errorlogs
+
+      - name: Cross-compile iOS Simulator fixtures
+        run: |
+          meson setup build-ios-sim --cross-file tests/ios-simulator.ini
+          meson compile -C build-ios-sim
+
+  windows:
+    name: Windows (MSVC / D3D11 WARP)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Meson and Ninja
+        run: pip install meson ninja
+
+      - name: Install Vulkan SDK (glslangValidator)
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: latest
+          cache: true
+
+      - name: Set up MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure full build
+        run: meson setup build
+
+      - name: Compile full build
+        run: meson compile -C build
+
+      - name: Run test suite (D3D11 WARP)
+        run: meson test -C build --no-rebuild --print-errorlogs
+
+      - name: Configure core-only build (-Dslang=false)
+        run: meson setup build-core -Dslang=false
+
+      - name: Compile core-only build
+        run: meson compile -C build-core
+
+      - name: Run core-only test suite
+        run: meson test -C build-core --no-rebuild --print-errorlogs
+
+  browser:
+    name: Browser (Emscripten / WebGL2 & WebGPU via Docker)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: sokol-slang-tests:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Emscripten browser tests
+        run: docker run --rm --shm-size=1g -v "$GITHUB_WORKSPACE:/work" sokol-slang-tests:latest browser
+
+      - name: Clean up container artifacts
+        if: always()
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/work" alpine rm -rf /work/build-docker-browser

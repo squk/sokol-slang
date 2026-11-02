@@ -1,0 +1,14 @@
+{
+  "module": "meson_example",
+  "program": "draw",
+  "vertex": "vertexMain",
+  "fragment": "fragmentMain",
+  "resources": {
+    "uniforms": {
+      "kind": "uniform",
+      "slots": {
+        "vertex": 0
+      }
+    }
+  }
+}

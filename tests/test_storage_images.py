@@ -16,11 +16,11 @@ def main():
     parser.add_argument('--slangc')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    original = json.loads((root / 'examples/storage-image/glsl/manifest.json').read_text())
+    original = json.loads((root / 'tests/fixtures/storage-image/glsl/manifest.json').read_text())
     with tempfile.TemporaryDirectory(prefix='sokol storage images ') as directory:
         work = Path(directory)
         binary = work / 'generic_storage_image.spv'
-        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'examples/storage-image/glsl/shader.comp'), '-o', str(binary)])
+        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'tests/fixtures/storage-image/glsl/shader.comp'), '-o', str(binary)])
         spirv = binary.read_bytes()
         manifest = work / 'manifest.json'
         header, report = work / 'shader.h', work / 'shader.json'
@@ -109,10 +109,10 @@ def main():
 
         if args.slangc:
             metadata = work / 'slang.json'
-            authored = json.loads((root / 'examples/storage-image/metadata.json').read_text())
+            authored = json.loads((root / 'tests/fixtures/storage-image/metadata.json').read_text())
             metadata.write_text(json.dumps(authored))
             frontend = [sys.executable, str(root / 'tools/sokol-slang'), '--slangc', args.slangc, '--core', args.core,
-                '--input', str(root / 'examples/storage-image/shader.slang'), '--metadata', str(metadata),
+                '--input', str(root / 'tests/fixtures/storage-image/shader.slang'), '--metadata', str(metadata),
                 '--output', str(header), '--reflection', str(report), '--depfile', str(work / 'shader.d')]
             run(frontend)
             verify()

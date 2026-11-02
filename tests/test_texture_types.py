@@ -13,8 +13,8 @@ def main():
     parser.add_argument('--glslang', required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((root / 'examples/portable/glsl/manifest.json').read_text())
-    original = (root / 'examples/portable/glsl/fragment.frag').read_text()
+    manifest = json.loads((root / 'tests/fixtures/portable/glsl/manifest.json').read_text())
+    original = (root / 'tests/fixtures/portable/glsl/fragment.frag').read_text()
     cases = [
         ('uint', 'nonfiltering', 'utexture2D', 'vec4(texelFetch(usampler2D(tex, smp), ivec2(varying_uv * 4.0), 0))'),
         ('sint', 'nonfiltering', 'itexture2D', 'vec4(texelFetch(isampler2D(tex, smp), ivec2(varying_uv * 4.0), 0))'),
@@ -24,7 +24,7 @@ def main():
     ]
     with tempfile.TemporaryDirectory(prefix='sokol texture types ') as directory:
         work = Path(directory)
-        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'examples/portable/glsl/vertex.vert'),
+        run([args.glslang, '-V', '--target-env', 'vulkan1.1', str(root / 'tests/fixtures/portable/glsl/vertex.vert'),
              '-o', str(work / 'generic_vertex.spv')])
         header = work / 'shader.h'
         command = [args.core, '--manifest', str(work / 'manifest.json'), '--output', str(header),

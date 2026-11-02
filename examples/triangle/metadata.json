@@ -1,0 +1,7 @@
+{
+  "module": "triangle",
+  "program": "draw",
+  "vertex": "vertexMain",
+  "fragment": "fragmentMain",
+  "resources": {}
+}

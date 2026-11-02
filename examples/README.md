@@ -1,19 +1,18 @@
 # Examples
 
-Each directory has Slang source, metadata, and equivalent GLSL in `glsl/`.
+Working examples demonstrating how to compile and run shaders with `sokol-slang`.
 
 | Example | Covers |
 | --- | --- |
-| [portable](portable/shader.slang) | Transforms, textures, tint, clip depth |
-| [compute](compute/shader.slang) | Structured buffers and workgroups |
-| [storage-image](storage-image/shader.slang) | RGBA8 writes and R32UI read/write |
-| [depth](depth/shader.slang) | Depth comparison and fullscreen triangle |
+| [triangle](triangle/README.md) | Complete graphical application using `sokol_app` and `sokol_gfx` rendering a colored triangle with a Slang shader |
+| [meson-invocation](meson-invocation/README.md) | Meson `custom_target` integration guide and sample build file for consuming `sokol-slang` |
 
-After [setup](../README.md#build), build the portable Slang and GLSL examples:
+## Building the Triangle App
+
+From the repository root:
 
 ```sh
-meson compile -C build portable-shader generic-shader
+meson setup build
+meson compile -C build triangle-app
+./build/examples/triangle/triangle-app
 ```
-
-GLSL needs `glslangValidator`. Outputs stay in the build directory.
-See [usage and limits](../docs/reference.md).

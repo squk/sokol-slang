@@ -18,8 +18,8 @@ meson test -C build --print-errorlogs
 ## Compile
 
 ```sh
-python3 tools/sokol-slang examples/portable/shader.slang \
-  --metadata examples/portable/metadata.json -o build/portable.h
+python3 tools/sokol-slang examples/triangle/shader.slang \
+  --metadata examples/triangle/metadata.json -o build/triangle.h
 ```
 
 Tools are discovered automatically; override with `--slangc` or `--core`.

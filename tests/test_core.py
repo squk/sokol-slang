@@ -15,14 +15,14 @@ def main():
     parser.add_argument('--glslang', required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    original = json.loads((root / 'examples/portable/glsl/manifest.json').read_text())
+    original = json.loads((root / 'tests/fixtures/portable/glsl/manifest.json').read_text())
     with tempfile.TemporaryDirectory(prefix='sokol spirv ') as directory:
         work = Path(directory)
         binaries = {}
         for stage, suffix in (('vertex', 'vert'), ('fragment', 'frag')):
             output = work / original['stages'][stage]['file']
             run([args.glslang, '-V', '--target-env', 'vulkan1.1',
-                 str(root / f'examples/portable/glsl/{stage}.{suffix}'), '-o', str(output)])
+                 str(root / f'tests/fixtures/portable/glsl/{stage}.{suffix}'), '-o', str(output)])
             binaries[stage] = output.read_bytes()
         manifest = work / 'manifest.json'
         header = work / 'shader.h'
@@ -67,8 +67,8 @@ def main():
         assert 'member_0' in header.read_text(), 'stripped members need stable fallback names'
         # A shared vertex entry may emit varyings unused by this fragment entry.
         # Exercise a hole between consumed locations as well as a trailing output.
-        vertex_source = (root / 'examples/portable/glsl/vertex.vert').read_text()
-        fragment_source = (root / 'examples/portable/glsl/fragment.frag').read_text()
+        vertex_source = (root / 'tests/fixtures/portable/glsl/vertex.vert').read_text()
+        fragment_source = (root / 'tests/fixtures/portable/glsl/fragment.frag').read_text()
         extra_vertex = vertex_source.replace(
             'void main()',
             'layout(location=1) out vec2 unused_middle;\n'

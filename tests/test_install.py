@@ -67,10 +67,10 @@ def main():
 
         # Only these copied sources and the staged tools are used below. Slang
         # remains an explicitly supplied external compiler, not an installed dependency.
-        examples = work / 'examples'
-        shutil.copytree(root / 'examples', examples)
+        fixtures = work / 'fixtures'
+        shutil.copytree(root / 'tests/fixtures', fixtures)
         for name in ('portable', 'compute', 'storage-image', 'depth'):
-            example = examples / name
+            example = fixtures / name
             stages = {'compute'} if name in ('compute', 'storage-image') else {'vertex', 'fragment'}
             if args.glslang:
                 manifest = example / 'glsl/manifest.json'

@@ -1,10 +1,12 @@
 # Set the SDK before Meson checks Objective-C++. host_machine is not available
 # until project() runs, so Python identifies the build OS here. Cross builds
 # keep their toolchain SDK; explicit Meson compiler options override these defaults.
-project('sokol-slang', 'cpp', version: '0.1.0', meson_version: '>=1.1',
-  default_options: ['cpp_std=c++20', 'build.cpp_std=c++20', 'warning_level=1'] + (
+project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.1',
+  default_options: ['c_std=c11', 'cpp_std=c++20', 'build.cpp_std=c++20', 'warning_level=1'] + (
     run_command('python3', '-c', 'import sys; print(sys.platform)', check: true).stdout().strip() == 'darwin'
     and not meson.is_cross_build() ? [
+      'c_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
+      'c_link_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
       'objcpp_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
       'objcpp_link_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
     ] : []
@@ -120,7 +122,7 @@ if get_option('slang')
 
   test('compiler-contract', python, args: [files('tests/test_compiler.py'), '--slangc', slangc.full_path(), '--core', core.full_path()], depends: core, timeout: 60)
 
-  compute_header = custom_target('compute-shader', input: ['examples/compute/shader.slang', 'examples/compute/metadata.json'],
+  compute_header = custom_target('compute-shader', input: ['tests/fixtures/compute/shader.slang', 'tests/fixtures/compute/metadata.json'],
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',
     depend_files: files('tools/sokol-slang'),
     command: slang_command)
@@ -150,7 +152,7 @@ if get_option('slang')
   endif
 
   portable_header = custom_target('portable-shader',
-    input: ['examples/portable/shader.slang', 'examples/portable/metadata.json'],
+    input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
     build_by_default: true, output: ['portable.h', 'portable.reflection.json'], depfile: 'portable.d',
     depend_files: files('tools/sokol-slang'),
     command: slang_command)
@@ -162,7 +164,7 @@ if get_option('slang')
       cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="portable.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
     test('d3d11-proof', d3d11_proof)
     hlsl4_header = custom_target('portable-hlsl4-shader',
-      input: ['examples/portable/shader.slang', 'examples/portable/metadata.json'],
+      input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
       output: ['portable_hlsl4.h', 'portable_hlsl4.reflection.json'], depfile: 'portable_hlsl4.d',
       depend_files: files('tools/sokol-slang'),
       command: slang_command + ['--targets', 'hlsl4'])
@@ -200,7 +202,7 @@ if get_option('slang')
       if target[2].found()
         name = 'portable_' + target[0]
         header = custom_target(name + '-shader',
-          input: ['examples/portable/shader.slang', 'examples/portable/metadata.json'],
+          input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
           output: [name + '.h', name + '.json'], depfile: name + '.d',
           depend_files: files('tools/sokol-slang'),
           command: slang_command + ['--targets', target[0]])
@@ -212,14 +214,16 @@ if get_option('slang')
     endforeach
   endif
 
+  subdir('examples/triangle')
+
 endif
 
 # GLSL fixtures exercise the core independently of the optional Slang frontend.
 glslang = find_program('glslangValidator', native: true, required: false)
 if glslang.found()
-  generic_compute_spirv = custom_target('generic-compute-spirv', input: 'examples/compute/glsl/shader.comp',
+  generic_compute_spirv = custom_target('generic-compute-spirv', input: 'tests/fixtures/compute/glsl/shader.comp',
     output: 'generic_compute.spv', command: [glslang, '-V', '--target-env', 'vulkan1.1', '@INPUT@', '-o', '@OUTPUT@'])
-  generic_compute_manifest = configure_file(input: 'examples/compute/glsl/manifest.json', output: 'generic_compute_manifest.json', copy: true)
+  generic_compute_manifest = configure_file(input: 'tests/fixtures/compute/glsl/manifest.json', output: 'generic_compute_manifest.json', copy: true)
   generic_compute_header = custom_target('generic-compute-shader', input: [generic_compute_manifest, generic_compute_spirv],
     output: ['generic_compute.h', 'generic_compute.reflection.json'], depfile: 'generic_compute.d',
     command: core_command)
@@ -249,11 +253,11 @@ if glslang.found()
   endif
   test('compute-contract', python, args: [files('tests/test_compute.py'), '--core', core.full_path(),
     '--glslang', glslang.full_path()], depends: core, timeout: 120)
-  generic_vertex = custom_target('generic-vertex', input: 'examples/portable/glsl/vertex.vert',
+  generic_vertex = custom_target('generic-vertex', input: 'tests/fixtures/portable/glsl/vertex.vert',
     output: 'generic_vertex.spv', command: [glslang, '-V', '--target-env', 'vulkan1.1', '@INPUT@', '-o', '@OUTPUT@'])
-  generic_fragment = custom_target('generic-fragment', input: 'examples/portable/glsl/fragment.frag',
+  generic_fragment = custom_target('generic-fragment', input: 'tests/fixtures/portable/glsl/fragment.frag',
     output: 'generic_fragment.spv', command: [glslang, '-V', '--target-env', 'vulkan1.1', '@INPUT@', '-o', '@OUTPUT@'])
-  generic_manifest = configure_file(input: 'examples/portable/glsl/manifest.json', output: 'generic_manifest.json', copy: true)
+  generic_manifest = configure_file(input: 'tests/fixtures/portable/glsl/manifest.json', output: 'generic_manifest.json', copy: true)
   generic_header = custom_target('generic-shader', input: [generic_manifest, generic_vertex, generic_fragment],
     output: ['generic.h', 'generic.reflection.json'], depfile: 'generic.d',
     command: core_command)
@@ -387,16 +391,16 @@ endif
 
 storage_image_headers = []
 if get_option('slang')
-  storage_image_header = custom_target('storage-image-shader', input: ['examples/storage-image/shader.slang', 'examples/storage-image/metadata.json'],
+  storage_image_header = custom_target('storage-image-shader', input: ['tests/fixtures/storage-image/shader.slang', 'tests/fixtures/storage-image/metadata.json'],
     output: ['storage_image.h', 'storage_image.reflection.json'], depfile: 'storage_image.d',
     depend_files: files('tools/sokol-slang'),
     command: slang_command)
   storage_image_headers += [['', 'storage_image.h', storage_image_header]]
 endif
 if glslang.found()
-  generic_storage_image_spirv = custom_target('generic-storage-image-spirv', input: 'examples/storage-image/glsl/shader.comp',
+  generic_storage_image_spirv = custom_target('generic-storage-image-spirv', input: 'tests/fixtures/storage-image/glsl/shader.comp',
     output: 'generic_storage_image.spv', command: [glslang, '-V', '--target-env', 'vulkan1.1', '@INPUT@', '-o', '@OUTPUT@'])
-  generic_storage_image_manifest = configure_file(input: 'examples/storage-image/glsl/manifest.json', output: 'generic_storage_image_manifest.json', copy: true)
+  generic_storage_image_manifest = configure_file(input: 'tests/fixtures/storage-image/glsl/manifest.json', output: 'generic_storage_image_manifest.json', copy: true)
   generic_storage_image_header = custom_target('generic-storage-image-shader', input: [generic_storage_image_manifest, generic_storage_image_spirv],
     output: ['generic_storage_image.h', 'generic_storage_image.reflection.json'], depfile: 'generic_storage_image.d',
     command: core_command)
@@ -449,7 +453,7 @@ endforeach
 
 depth_headers = []
 if get_option('slang')
-  depth_header = custom_target('depth-shader', input: ['examples/depth/shader.slang', 'examples/depth/metadata.json'],
+  depth_header = custom_target('depth-shader', input: ['tests/fixtures/depth/shader.slang', 'tests/fixtures/depth/metadata.json'],
     output: ['depth.h', 'depth.reflection.json'], depfile: 'depth.d',
     depend_files: files('tools/sokol-slang'),
     command: slang_command)
@@ -458,10 +462,10 @@ endif
 if glslang.found()
   depth_spirv = []
   foreach stage : ['vert', 'frag']
-    depth_spirv += custom_target('generic-depth-' + stage, input: 'examples/depth/glsl/' + (stage == 'vert' ? 'vertex.vert' : 'fragment.frag'),
+    depth_spirv += custom_target('generic-depth-' + stage, input: 'tests/fixtures/depth/glsl/' + (stage == 'vert' ? 'vertex.vert' : 'fragment.frag'),
       output: 'generic_depth.' + stage + '.spv', command: [glslang, '-V', '--target-env', 'vulkan1.1', '@INPUT@', '-o', '@OUTPUT@'])
   endforeach
-  generic_depth_manifest = configure_file(input: 'examples/depth/glsl/manifest.json', output: 'generic_depth_manifest.json', copy: true)
+  generic_depth_manifest = configure_file(input: 'tests/fixtures/depth/glsl/manifest.json', output: 'generic_depth_manifest.json', copy: true)
   generic_depth_header = custom_target('generic-depth-shader', input: [generic_depth_manifest] + depth_spirv,
     output: ['generic_depth.h', 'generic_depth.reflection.json'], depfile: 'generic_depth.d',
     command: core_command)

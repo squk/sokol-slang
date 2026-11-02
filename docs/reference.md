@@ -95,8 +95,8 @@ build/sokol-spirv --inspect shader.spv
 ```
 
 The [version 1 schema](../schema/manifest.schema.json) defines the contract;
-see [raster](../examples/portable/glsl/manifest.json) and
-[compute](../examples/compute/glsl/manifest.json) manifests. Unknown/duplicate
+see [raster](../tests/fixtures/portable/glsl/manifest.json) and
+[compute](../tests/fixtures/compute/glsl/manifest.json) manifests. Unknown/duplicate
 fields, invalid types, missing resources, and binding collisions are errors.
 
 - A program has vertex/fragment stages or one compute stage. Each SPIR-V module
