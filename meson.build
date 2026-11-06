@@ -215,6 +215,7 @@ if get_option('slang')
   endif
 
   subdir('examples/triangle')
+  subdir('examples/textured-quad')
 
 endif
 

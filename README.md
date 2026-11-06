@@ -3,6 +3,8 @@
 Compile Slang into a Sokol header with backend shaders, buffer structs, and
 binding constants. Applications need only the header and Sokol.
 
+[![Textured quad rendered with Sokol and Slang](examples/textured-quad/screenshot.png)](examples/README.md#textured-quad)
+
 Alpha: APIs may change. Windows/D3D11 and iOS execution are unverified.
 
 ## Build
