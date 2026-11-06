@@ -29,8 +29,7 @@ backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc
 backend_compiler_dep = declare_dependency(link_with: backend_compiler,
   include_directories: include_directories('src'),
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep])
-core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: backend_compiler_dep,
-  native: true, install: not meson.is_subproject() and not meson.is_cross_build())
+
 
 # Export build-machine tools to consumers without adding rendering fixtures.
 # The compiler reads Sokol declarations; it must not link the parent's runtime.
@@ -61,6 +60,16 @@ if get_option('compiler_library')
   source_compiler_dep = declare_dependency(link_with: source_compiler,
     include_directories: include_directories('src'), dependencies: slang_sdk_library)
 endif
+core_dependencies = [backend_compiler_dep]
+core_defines = []
+if get_option('compiler_library')
+  core_dependencies += source_compiler_dep
+  core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
+endif
+core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
+  cpp_args: core_defines, native: true,
+  install: not meson.is_subproject() and not meson.is_cross_build())
+
 if meson.is_subproject()
   subdir_done()
 endif

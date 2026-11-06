@@ -201,6 +201,19 @@ SourceResult compile_source(const SourceRequest &request) {
         if (!code || !code->getBufferSize() || code->getBufferSize() % sizeof(uint32_t))
             return fail("code", "Slang returned invalid SPIR-V byte length");
         StageCode stage;
+        switch (layout->getEntryPointByIndex(i)->getStage()) {
+        case SLANG_STAGE_VERTEX:
+            stage.stage = "vertex";
+            break;
+        case SLANG_STAGE_FRAGMENT:
+            stage.stage = "fragment";
+            break;
+        case SLANG_STAGE_COMPUTE:
+            stage.stage = "compute";
+            break;
+        default:
+            return fail("entry", "Sokol supports vertex, fragment and compute stages");
+        }
         stage.entry_point = request.entry_points[i];
         stage.spirv.resize(code->getBufferSize() / sizeof(uint32_t));
         std::memcpy(stage.spirv.data(), code->getBufferPointer(), code->getBufferSize());

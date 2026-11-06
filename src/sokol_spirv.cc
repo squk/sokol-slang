@@ -1,11 +1,59 @@
 #include "backend_internal.h"
 #include "program_bindings.h"
+#ifdef SOKOL_SLANG_SOURCE_COMPILER
+#include "slang_compile.h"
+#endif
 #include <chrono>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+
+#ifdef SOKOL_SLANG_SOURCE_COMPILER
+static int compile_source_request(const std::string &input, const std::string &output) {
+    std::ifstream stream(input);
+    if (!stream)
+        throw std::runtime_error("Cannot open source request: " + input);
+    const auto document = Json::parse(stream);
+    const std::set<std::string> fields{"version",      "module_name", "source_path",  "source",
+                                       "entry_points", "files",       "search_paths", "profile"};
+    if (!document.is_object() || document.at("version") != 1)
+        throw std::runtime_error("Expected source request version 1");
+    for (const auto &[name, value] : document.items())
+        if (!fields.count(name))
+            throw std::runtime_error("Unknown source request field: " + name);
+    sokol_slang::SourceRequest request;
+    request.module_name = document.at("module_name");
+    request.source_path = document.at("source_path");
+    request.source = document.at("source");
+    request.entry_points = document.at("entry_points").get<std::vector<std::string>>();
+    request.files = document.value("files", std::map<std::string, std::string>{});
+    request.search_paths = document.value("search_paths", std::vector<std::string>{});
+    request.profile = document.value("profile", request.profile);
+    auto result = sokol_slang::compile_source(request);
+    Json report = {{"version", 1},
+                   {"succeeded", result.succeeded},
+                   {"compiler", result.compiler_identity},
+                   {"dependencies", result.dependency_paths},
+                   {"diagnostics", Json::array()},
+                   {"stages", Json::array()}};
+    for (const auto &diagnostic : result.diagnostics)
+        report["diagnostics"].push_back({{"phase", diagnostic.phase}, {"text", diagnostic.text}});
+    if (result.succeeded) {
+        report["reflection"] = Json::parse(result.reflection_json);
+        for (const auto &stage : result.stages)
+            report["stages"].push_back(
+                {{"stage", stage.stage}, {"entry", stage.entry_point}, {"spirv", stage.spirv}});
+    }
+    std::ofstream destination(output, std::ios::binary);
+    destination << report.dump(2) << '\n';
+    destination.close();
+    if (!destination)
+        throw std::runtime_error("Cannot write source result: " + output);
+    return result.succeeded ? 0 : 1;
+}
+#endif
 
 int main(int argc, char **argv) {
     std::filesystem::path native_work;
@@ -34,6 +82,7 @@ int main(int argc, char **argv) {
                              "sokol-spirv --compute compute.spv -o shader.h\n"
                              "sokol-spirv --manifest programs.json -o shader.h\n"
                              "sokol-spirv --inspect shader.spv\n"
+                             "sokol-spirv --source-request request.json -o result.json\n"
                              "Optional: --module NAME --program NAME --targets DIALECTS\n"
                              "          --reflection FILE --depfile FILE\n"
                              "          --binding STAGE:NAME=SLOT --sample-type NAME=TYPE "
@@ -44,7 +93,7 @@ int main(int argc, char **argv) {
             if (key != "--manifest" && key != "--output" && key != "--reflection" &&
                 key != "--depfile" && key != "--targets" && key != "--inspect" &&
                 key != "--vertex" && key != "--fragment" && key != "--compute" &&
-                key != "--module" && key != "--program")
+                key != "--module" && key != "--program" && key != "--source-request")
                 throw std::runtime_error("unknown option: " + key);
             if (++i == argc || !options.emplace(key, argv[i]).second)
                 throw std::runtime_error("missing value or duplicate option: " + key);
@@ -57,6 +106,15 @@ int main(int argc, char **argv) {
         }
         if (!options.count("--output"))
             throw std::runtime_error("missing --output");
+        if (options.count("--source-request")) {
+            if (options.size() != 2 || !constraints.empty())
+                throw std::runtime_error("--source-request accepts only --output");
+#ifdef SOKOL_SLANG_SOURCE_COMPILER
+            return compile_source_request(options.at("--source-request"), options.at("--output"));
+#else
+            throw std::runtime_error("Source requests require -Dcompiler_library=true");
+#endif
+        }
         const auto output_path = std::filesystem::absolute(options.at("--output"));
         std::map<std::string, Json> inspections;
         auto inspect = [&](const std::string &path) -> Json {

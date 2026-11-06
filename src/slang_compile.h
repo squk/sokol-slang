@@ -21,6 +21,7 @@ struct SourceRequest {
 };
 
 struct StageCode {
+    std::string stage;
     std::string entry_point;
     std::vector<uint32_t> spirv;
 };
