@@ -2,3 +2,5 @@ option('slangc', type: 'string', value: '', description: 'Build-machine Slang 20
 
 option('slang', type: 'boolean', value: true, description: 'Build and install sokol-slang, with Slang examples and tests')
 option('browser', type: 'string', value: '', description: 'Chromium executable for Emscripten WebGL/WebGPU rendering tests')
+
+option('compiler_library', type: 'boolean', value: false, description: 'Build the source compiler library for editor and tool callers')

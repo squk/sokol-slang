@@ -13,6 +13,7 @@ project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.1',
   ),
 )
 python = import('python').find_installation('python3')
+fs = import('fs')
 # iOS and simulator cross files also use Darwin; only macOS has CGL.
 macos_host = host_machine.system() == 'darwin' and meson.get_compiler('cpp').get_define('__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__') != ''
 sokol_tools_dep = subproject('sokol-tools').get_variable('sokol_tools_dep')
@@ -39,6 +40,20 @@ if get_option('slang')
     endif
     slangc = subproject('slang-' + slang_platform + '-' + slang_cpu).get_variable('slangc')
   endif
+endif
+# The editor links Slang in-process. Cross-built players consume cooked data;
+# they must not link the build machine's Slang SDK.
+if get_option('compiler_library')
+  if not get_option('slang') or meson.is_cross_build()
+    error('compiler_library requires Slang and a native editor/tool build')
+  endif
+  slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
+  slang_sdk_include = include_directories(slang_sdk_root / 'include')
+  slang_sdk_library = meson.get_compiler('cpp').find_library('slang', dirs: slang_sdk_root / 'lib')
+  source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
+    include_directories: slang_sdk_include, dependencies: slang_sdk_library)
+  source_compiler_dep = declare_dependency(link_with: source_compiler,
+    include_directories: include_directories('src'), dependencies: slang_sdk_library)
 endif
 if meson.is_subproject()
   subdir_done()
