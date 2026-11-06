@@ -22,8 +22,14 @@ tint_dep = subproject('tint').get_variable('tint_dep')
 json_dep = subproject('json').get_variable('json_dep')
 manifest_schema = custom_target('manifest-schema', input: 'schema/manifest.schema.json',
   output: 'manifest_schema.h', command: [python, files('tools/embed_schema.py'), '@INPUT@', '@OUTPUT@'])
-core = executable('sokol-spirv', 'src/sokol_spirv.cc', 'src/manifest.cc', 'src/program_bindings.cc', 'src/native_bytecode.cc', manifest_schema,
+backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc',
+  'src/manifest.cc', 'src/program_bindings.cc', 'src/native_bytecode.cc', manifest_schema,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep],
+  native: true)
+backend_compiler_dep = declare_dependency(link_with: backend_compiler,
+  include_directories: include_directories('src'),
+  dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep])
+core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: backend_compiler_dep,
   native: true, install: not meson.is_subproject() and not meson.is_cross_build())
 
 # Export build-machine tools to consumers without adding rendering fixtures.
