@@ -64,6 +64,19 @@ def main():
         stages = json.loads(reflection.read_text())['targets']['metal_macos']
         assert len(stages['vertex']['spirv']['outputs']) == 4
         assert len(stages['fragment']['spirv']['inputs']) == 2
+        # Native texture loads must not expose an unused helper sampler.
+        loads = source.replace('tex.Sample(smp, input.uv)', 'tex.Load(int3(0, 0, 0))')
+        load_metadata = copy.deepcopy(metadata)
+        del load_metadata['resources']['smp']
+        load_metadata['resources']['tex']['sample_type'] = 'unfilterable_float'
+        run(loads, load_metadata, extra_args=['--targets', 'metal_macos:wgsl:spirv_vk'])
+        load_report = json.loads(reflection.read_text())
+        assert not any(resource['kind'] == 'sampler' for resource in load_report['resources'].values())
+        for stages in load_report['targets'].values():
+            assert not any(binding['kind'] == 'sampler' for stage in stages.values()
+                           for binding in stage['bindings'])
+        assert 'desc.samplers[' not in output.read_text()
+        run(source, metadata)
         broken = copy.deepcopy(metadata)
         broken['resources']['tex']['slots']['fragment'] = 0
         run(source, broken, 'duplicate view slot')
