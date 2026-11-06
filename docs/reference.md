@@ -166,6 +166,14 @@ identity, dependency paths and diagnostics. This route and in-process callers us
 the same `compile_source` function. `compile_backend` applies Sokol's shared
 binding rules and returns owned backend code and reflection without C++ headers.
 
+`ProgramArtifact::layout` exports merged attributes, uniform blocks and members,
+texture/sampler pairs, storage resources, fragment outputs and compute workgroup
+sizes. It uses the C-header generator's enum mappings and includes native binding
+indices and uniform flattening. `to_json()` writes format version 1 with the
+layout, reflection, stage source/bytecode, entries and native profiles. The CLI
+reflection report exposes the same layout. GPU creation and pipeline readiness
+remain the caller's work.
+
 The frontend generates metadata from the shader. Mark entry points with
 `[shader("vertex")]`, `[shader("fragment")]`, or `[shader("compute")]`;
 select ambiguous entries with `--vertex`, `--fragment`, or `--compute`.

@@ -8,6 +8,7 @@ struct BackendStage {
     std::string target;
     std::string stage;
     std::string entry;
+    std::string profile;
     std::string source;
     std::vector<uint8_t> bytecode;
 };
@@ -17,7 +18,9 @@ struct BackendStage {
 struct ProgramArtifact {
     static constexpr uint32_t format_version = 1;
     Json reflection;
+    Json layout;
     std::vector<BackendStage> stages;
+    Json to_json() const;
 };
 
 struct BackendRequest {

@@ -241,6 +241,11 @@ class SokolGenerator : public gen::SokolCGenerator {
   public:
     std::map<std::string, std::string> uniform_paths;
     std::string take_header() { return std::move(content); }
+    Json describe_interface(const refl::ProgramReflection &program);
+    std::string native_profile(Slang::Enum target, ShaderStage::Enum stage) {
+        const char *profile = hlsl_target(target, stage);
+        return profile ? profile : "";
+    }
     std::string internal_program_prefix, public_program_prefix;
 
   private:
@@ -265,6 +270,150 @@ class SokolGenerator : public gen::SokolCGenerator {
         return {};
     }
 };
+
+Json SokolGenerator::describe_interface(const refl::ProgramReflection &program) {
+    Json result = {{"name", program.name},
+                   {"attributes", Json::array()},
+                   {"uniform_blocks", Json::array()},
+                   {"textures", Json::array()},
+                   {"samplers", Json::array()},
+                   {"storage_buffers", Json::array()},
+                   {"storage_images", Json::array()},
+                   {"texture_sampler_pairs", Json::array()},
+                   {"fragment_outputs", Json::array()}};
+    auto native_indices = [](Json &item, const auto &resource) {
+        if constexpr (requires { resource.hlsl_register_b_n; })
+            if (resource.hlsl_register_b_n >= 0)
+                item["hlsl_register_b_n"] = resource.hlsl_register_b_n;
+        if constexpr (requires { resource.hlsl_register_t_n; })
+            if (resource.hlsl_register_t_n >= 0)
+                item["hlsl_register_t_n"] = resource.hlsl_register_t_n;
+        if constexpr (requires { resource.hlsl_register_u_n; })
+            if (resource.hlsl_register_u_n >= 0)
+                item["hlsl_register_u_n"] = resource.hlsl_register_u_n;
+        if constexpr (requires { resource.hlsl_register_s_n; })
+            if (resource.hlsl_register_s_n >= 0)
+                item["hlsl_register_s_n"] = resource.hlsl_register_s_n;
+        if constexpr (requires { resource.msl_buffer_n; })
+            if (resource.msl_buffer_n >= 0)
+                item["msl_buffer_n"] = resource.msl_buffer_n;
+        if constexpr (requires { resource.msl_texture_n; })
+            if (resource.msl_texture_n >= 0)
+                item["msl_texture_n"] = resource.msl_texture_n;
+        if constexpr (requires { resource.msl_sampler_n; })
+            if (resource.msl_sampler_n >= 0)
+                item["msl_sampler_n"] = resource.msl_sampler_n;
+        if constexpr (requires { resource.wgsl_group0_binding_n; })
+            if (resource.wgsl_group0_binding_n >= 0)
+                item["wgsl_group0_binding_n"] = resource.wgsl_group0_binding_n;
+        if constexpr (requires { resource.wgsl_group1_binding_n; })
+            if (resource.wgsl_group1_binding_n >= 0)
+                item["wgsl_group1_binding_n"] = resource.wgsl_group1_binding_n;
+        if constexpr (requires { resource.spirv_set0_binding_n; })
+            if (resource.spirv_set0_binding_n >= 0)
+                item["spirv_set0_binding_n"] = resource.spirv_set0_binding_n;
+        if constexpr (requires { resource.spirv_set1_binding_n; })
+            if (resource.spirv_set1_binding_n >= 0)
+                item["spirv_set1_binding_n"] = resource.spirv_set1_binding_n;
+        if constexpr (requires { resource.glsl_binding_n; })
+            if (resource.glsl_binding_n >= 0)
+                item["glsl_binding_n"] = resource.glsl_binding_n;
+    };
+    if (program.has_vs()) {
+        for (const auto &attribute : program.vs().inputs) {
+            if (attribute.slot < 0)
+                continue;
+            result["attributes"].push_back(
+                {{"slot", attribute.slot},
+                 {"name", attribute.name},
+                 {"base_type", attr_basetype(attribute.type_info.basetype())},
+                 {"hlsl_sem_name", attribute.sem_name},
+                 {"hlsl_sem_index", attribute.sem_index}});
+        }
+    }
+    if (program.has_fs()) {
+        for (const auto &output : program.fs().outputs)
+            if (output.slot >= 0)
+                result["fragment_outputs"].push_back({{"slot", output.slot},
+                                                      {"name", output.name},
+                                                      {"type", output.type_info.type_as_glsl()}});
+    }
+    if (program.has_cs())
+        result["workgroup_size"] = program.cs().cs_workgroup_size;
+    for (const auto &block : program.bindings.uniform_blocks) {
+        Json item = {{"name", block.name},
+                     {"slot", block.sokol_slot},
+                     {"stage", shader_stage(block.stage)},
+                     {"size", roundup(block.struct_info.size, 16)},
+                     {"instance_name", block.inst_name},
+                     {"flattened", block.flattened},
+                     {"members", Json::array()}};
+        native_indices(item, block);
+        if (block.flattened && !block.struct_info.struct_items.empty()) {
+            item["flattened_type"] = flattened_uniform_type(block.struct_info.struct_items[0].type);
+            item["flattened_count"] = roundup(block.struct_info.size, 16) / 16;
+        }
+        for (const auto &member : block.struct_info.struct_items) {
+            const auto path = block.inst_name + "." + member.name;
+            const auto found = uniform_paths.find(path);
+            item["members"].push_back(
+                {{"name", member.name},
+                 {"offset", member.offset},
+                 {"type", uniform_type(member.type)},
+                 {"array_count", member.array_count},
+                 {"binding_name", found == uniform_paths.end() ? path : found->second}});
+        }
+        result["uniform_blocks"].push_back(std::move(item));
+    }
+    for (const auto &texture : program.bindings.textures) {
+        Json item = {{"name", texture.name},
+                     {"slot", texture.sokol_slot},
+                     {"stage", shader_stage(texture.stage)},
+                     {"image_type", image_type(texture.type)},
+                     {"sample_type", image_sample_type(texture.sample_type)},
+                     {"multisampled", texture.multisampled}};
+        native_indices(item, texture);
+        result["textures"].push_back(std::move(item));
+    }
+    for (const auto &sampler : program.bindings.samplers) {
+        Json item = {{"name", sampler.name},
+                     {"slot", sampler.sokol_slot},
+                     {"stage", shader_stage(sampler.stage)},
+                     {"sampler_type", sampler_type(sampler.type)}};
+        native_indices(item, sampler);
+        result["samplers"].push_back(std::move(item));
+    }
+    for (const auto &buffer : program.bindings.storage_buffers) {
+        Json item = {{"name", buffer.name},
+                     {"slot", buffer.sokol_slot},
+                     {"stage", shader_stage(buffer.stage)},
+                     {"readonly", buffer.readonly}};
+        native_indices(item, buffer);
+        result["storage_buffers"].push_back(std::move(item));
+    }
+    for (const auto &image : program.bindings.storage_images) {
+        Json item = {{"name", image.name},
+                     {"slot", image.sokol_slot},
+                     {"stage", shader_stage(image.stage)},
+                     {"image_type", image_type(image.type)},
+                     {"access_format", storage_pixel_format(image.access_format)},
+                     {"writeonly", image.writeonly}};
+        native_indices(item, image);
+        result["storage_images"].push_back(std::move(item));
+    }
+    for (const auto &pair : program.bindings.texture_samplers) {
+        const auto *texture = program.bindings.find_texture_by_name(pair.texture_name);
+        const auto *sampler = program.bindings.find_sampler_by_name(pair.sampler_name);
+        if (!texture || !sampler)
+            throw std::runtime_error("Texture/sampler pair has no resource");
+        result["texture_sampler_pairs"].push_back({{"name", pair.name},
+                                                   {"slot", pair.sokol_slot},
+                                                   {"stage", shader_stage(pair.stage)},
+                                                   {"view_slot", texture->sokol_slot},
+                                                   {"sampler_slot", sampler->sokol_slot}});
+    }
+    return result;
+}
 
 static uint32_t prepare_glsl(CompilerGLSL &compiler) {
     for (const auto &resource : compiler.get_shader_resources().uniform_buffers)
@@ -885,6 +1034,9 @@ GeneratedProgram generate_program(const Manifest &manifest,
     check(reflection.error);
     if (artifact) {
         artifact->reflection = report;
+        if (reflection.progs.size() != 1)
+            throw std::runtime_error("Expected one reflected program");
+        artifact->layout = generator.describe_interface(reflection.progs[0]);
         for (auto target : targets) {
             for (size_t i = 0; i < stages.size(); ++i) {
                 const auto &source = translated[target].sources[i];
@@ -892,6 +1044,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
                 stage.target = Slang::to_str(target);
                 stage.stage = stages[i];
                 stage.entry = report["targets"][stage.target][stage.stage]["entry"];
+                stage.profile = generator.native_profile(
+                    target, ShaderStage::from_snippet_type(input.snippets[i].type));
                 stage.source = source.source_code;
                 if (const auto *blob = bytecode[target].find_blob_by_snippet_index(i))
                     stage.bytecode.assign(blob->data.begin(), blob->data.end());
@@ -900,6 +1054,9 @@ GeneratedProgram generate_program(const Manifest &manifest,
         }
         return {{}, std::move(report)};
     }
+    if (reflection.progs.size() != 1)
+        throw std::runtime_error("Expected one reflected program");
+    report["layout"] = generator.describe_interface(reflection.progs[0]);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
@@ -910,6 +1067,21 @@ GeneratedProgram generate_program(const Manifest &manifest,
 }
 
 namespace sokol_slang {
+Json ProgramArtifact::to_json() const {
+    Json result = {{"version", format_version},
+                   {"layout", layout},
+                   {"reflection", reflection},
+                   {"stages", Json::array()}};
+    for (const auto &stage : stages)
+        result["stages"].push_back({{"target", stage.target},
+                                    {"stage", stage.stage},
+                                    {"entry", stage.entry},
+                                    {"profile", stage.profile},
+                                    {"source", stage.source},
+                                    {"bytecode", stage.bytecode}});
+    return result;
+}
+
 ProgramArtifact compile_backend(const BackendRequest &request) {
     if (request.stages.empty())
         throw std::runtime_error("No SPIR-V stages supplied");
