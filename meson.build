@@ -56,6 +56,11 @@ if get_option('compiler_library') and get_option('slang')
     include_directories: slang_sdk_include, dependencies: slang_sdk_library, native: true)
   source_compiler_dep = declare_dependency(link_with: source_compiler,
     include_directories: include_directories('src'), dependencies: slang_sdk_library)
+  program_compiler = static_library('sokol-slang-program', 'src/program_compile.cc',
+    dependencies: [source_compiler_dep, backend_compiler_dep], native: true)
+  program_compiler_dep = declare_dependency(link_with: program_compiler,
+    include_directories: include_directories('src'),
+    dependencies: [source_compiler_dep, backend_compiler_dep])
 endif
 core_dependencies = [backend_compiler_dep]
 core_defines = []
@@ -91,6 +96,12 @@ if host_machine.system() == 'darwin'
 endif
 
 test('frontend-bindings', python, args: files('tests/test_frontend_bindings.py'))
+
+if get_option('compiler_library') and get_option('slang')
+  program_compile_test = executable('test-program-compile', 'tests/test_program_compile.cc',
+    dependencies: program_compiler_dep, native: true)
+  test('program-compile', program_compile_test, suite: 'compiler-library', timeout: 60)
+endif
 
 if host_machine.system() == 'windows'
   d3d11_dep = meson.get_compiler('cpp').find_library('d3d11')

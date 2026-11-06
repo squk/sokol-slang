@@ -166,6 +166,14 @@ identity, dependency paths and diagnostics. This route and in-process callers us
 the same `compile_source` function. `compile_backend` applies Sokol's shared
 binding rules and returns owned backend code and reflection without C++ headers.
 
+`program_compiler_dep` exports `compile_programs(ProgramRequest)`. Each named
+program selects a compute entry or vertex/fragment pair and supplies backend
+manifest policy. The call compiles their distinct source entries once, then runs
+the existing backend compiler for each selection. `ProgramResult` owns source
+reflection, dependencies, diagnostics and the complete program map. A failure
+returns no partial program map; source success remains distinct from family
+success. The caller owns job scheduling, caching and GPU preparation.
+
 `ProgramArtifact::layout` exports merged attributes, uniform blocks and members,
 texture/sampler pairs, storage resources, fragment outputs and compute workgroup
 sizes. It uses the C-header generator's enum mappings and includes native binding
