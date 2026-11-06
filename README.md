@@ -31,3 +31,17 @@ Tools are discovered automatically; override with `--slangc` or `--core`.
 Use `--targets` to select backends and `-I` for imports/includes.
 
 [Examples](examples/README.md) · [Docker tests](docs/reference.md#docker) · [Reference](docs/reference.md)
+
+## Formatting
+
+Install `clang-format` and Black (`python3 -m pip install black`), then install the
+pre-commit hook from the repository root:
+
+```sh
+install -m 755 .githooks/pre-commit "$(git rev-parse --git-path hooks)/pre-commit"
+```
+
+The hook checks staged C/C++/Objective-C sources with `clang-format` and Python
+sources (including `tools/sokol-slang`) with Black. It excludes vendored code in
+`deps/` and `subprojects/` and prints formatting commands when changes are needed.
+It leaves files and staging untouched and preserves other installed hooks.

@@ -5,87 +5,103 @@
   "additionalProperties": false,
   "required": [
     "version",
-    "module",
-    "program",
-    "stages",
-    "resources"
+    "module"
   ],
   "properties": {
     "version": {
       "const": 1,
       "type": "integer"
     },
-    "module": {
-      "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
-      "maxLength": 100
-    },
-    "program": {
-      "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
-      "maxLength": 100
-    },
+    "module": {"$ref": "#/$defs/identifier"},
+    "program": {"$ref": "#/$defs/identifier"},
     "clip_depth": {
       "const": "zero_to_one"
+    },
+    "stages": {"$ref": "#/$defs/stages"},
+    "resources": {"$ref": "#/$defs/resources"},
+    "policies": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/policy"}
+    },
+    "bindings": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "name",
+          "slot"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "vertex",
+              "fragment",
+              "compute"
+            ]
+          },
+          "name": {"$ref": "#/$defs/identifier"},
+          "slot": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          }
+        }
+      }
+    },
+    "programs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/program"}
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "program",
+        "stages"
+      ]
+    },
+    {
+      "required": [
+        "programs"
+      ]
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
+      "maxLength": 100
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "entry"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "stages": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "vertex": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "file",
-            "entry"
-          ],
-          "properties": {
-            "file": {
-              "type": "string",
-              "minLength": 1
-            },
-            "entry": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "fragment": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "file",
-            "entry"
-          ],
-          "properties": {
-            "file": {
-              "type": "string",
-              "minLength": 1
-            },
-            "entry": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "compute": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "file",
-            "entry"
-          ],
-          "properties": {
-            "file": {
-              "type": "string",
-              "minLength": 1
-            },
-            "entry": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
+        "vertex": {"$ref": "#/$defs/stage"},
+        "fragment": {"$ref": "#/$defs/stage"},
+        "compute": {"$ref": "#/$defs/stage"}
       },
       "oneOf": [
         {
@@ -103,89 +119,135 @@
         }
       ]
     },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "set",
+        "binding",
+        "name",
+        "kind",
+        "slot"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "vertex",
+            "fragment",
+            "compute"
+          ]
+        },
+        "set": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "binding": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "name": {"$ref": "#/$defs/identifier"},
+        "kind": {
+          "enum": [
+            "uniform",
+            "storage_buffer",
+            "storage_image",
+            "texture",
+            "sampler"
+          ]
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "sample_type": {
+          "enum": [
+            "float",
+            "unfilterable_float",
+            "depth",
+            "sint",
+            "uint"
+          ]
+        },
+        "sampler_type": {
+          "enum": [
+            "filtering",
+            "nonfiltering",
+            "comparison"
+          ]
+        },
+        "access": {
+          "enum": [
+            "read",
+            "write",
+            "read_write"
+          ]
+        },
+        "format": {
+          "enum": [
+            "rgba8",
+            "rgba8_snorm",
+            "rgba8ui",
+            "rgba8i",
+            "rgba16ui",
+            "rgba16i",
+            "rgba16f",
+            "r32ui",
+            "r32i",
+            "r32f",
+            "rg32ui",
+            "rg32i",
+            "rg32f",
+            "rgba32ui",
+            "rgba32i",
+            "rgba32f"
+          ]
+        }
+      }
+    },
     "resources": {
       "type": "array",
       "maxItems": 128,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "stage",
-          "set",
-          "binding",
-          "name",
-          "kind",
-          "slot"
-        ],
-        "properties": {
-          "stage": {
-            "enum": [
-              "vertex",
-              "fragment",
-              "compute"
-            ]
-          },
-          "set": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 4294967295
-          },
-          "binding": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 4294967295
-          },
-          "name": {
-            "type": "string",
-            "pattern": "^[A-Za-z_][A-Za-z_0-9]*$",
-            "maxLength": 100
-          },
-          "kind": {
-            "enum": [
-              "uniform",
-              "storage_buffer",
-              "storage_image",
-              "texture",
-              "sampler"
-            ]
-          },
-          "slot": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 31
-          },
-          "sample_type": {
-            "enum": [
-              "float",
-              "unfilterable_float",
-              "depth",
-              "sint",
-              "uint"
-            ]
-          },
-          "sampler_type": {
-            "enum": [
-              "filtering",
-              "nonfiltering",
-              "comparison"
-            ]
-          },
-          "access": {
-            "enum": [
-              "read",
-              "write",
-              "read_write"
-            ]
-          },
-          "format": {
-            "enum": [
-              "rgba8", "rgba8_snorm", "rgba8ui", "rgba8i",
-              "rgba16ui", "rgba16i", "rgba16f",
-              "r32ui", "r32i", "r32f",
-              "rg32ui", "rg32i", "rg32f",
-              "rgba32ui", "rgba32i", "rgba32f"
-            ]
-          }
+      "items": {"$ref": "#/$defs/resource"}
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample_type": {
+          "enum": [
+            "float",
+            "unfilterable_float",
+            "depth",
+            "sint",
+            "uint"
+          ]
+        },
+        "sampler_type": {
+          "enum": [
+            "filtering",
+            "nonfiltering",
+            "comparison"
+          ]
+        }
+      }
+    },
+    "program": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "stages"
+      ],
+      "properties": {
+        "program": {"$ref": "#/$defs/identifier"},
+        "stages": {"$ref": "#/$defs/stages"},
+        "resources": {"$ref": "#/$defs/resources"},
+        "clip_depth": {
+          "const": "zero_to_one"
         }
       }
     }

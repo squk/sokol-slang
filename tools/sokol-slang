@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compile Slang into a Sokol header."""
+
 import argparse
 import json
 from pathlib import Path
@@ -10,29 +11,29 @@ import subprocess
 import sys
 import tempfile
 
-
-IDENTIFIER = re.compile(r'[A-Za-z_][A-Za-z_0-9]*\Z')
-LIMITS = {'uniform': 8, 'view': 32, 'sampler': 12}
-SAMPLE_TYPES = {'float', 'unfilterable_float', 'depth', 'sint', 'uint'}
-SAMPLER_TYPES = {'filtering', 'nonfiltering', 'comparison'}
-STAGES = ('vertex', 'fragment', 'compute')
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\Z")
+SAMPLE_TYPES = {"float", "unfilterable_float", "depth", "sint", "uint"}
+SAMPLER_TYPES = {"filtering", "nonfiltering", "comparison"}
+STAGES = ("vertex", "fragment", "compute")
 
 
 def identifier(value):
     if not IDENTIFIER.fullmatch(value):
-        raise ValueError(f'invalid identifier: {value}')
+        raise ValueError(f"invalid identifier: {value}")
     return value
 
 
 def parse_settings(values, allowed, label):
     result = {}
     for value in values:
-        name, separator, setting = value.partition('=')
+        name, separator, setting = value.partition("=")
         if not separator or setting not in allowed:
-            raise ValueError(f'{label} expects NAME=TYPE; choose from ' + ', '.join(sorted(allowed)))
+            raise ValueError(
+                f"{label} expects NAME=TYPE; choose from " + ", ".join(sorted(allowed))
+            )
         identifier(name)
         if name in result:
-            raise ValueError(f'duplicate {label}: {name}')
+            raise ValueError(f"duplicate {label}: {name}")
         result[name] = setting
     return result
 
@@ -40,241 +41,261 @@ def parse_settings(values, allowed, label):
 def parse_slots(values):
     result = {}
     for value in values:
-        name, separator, number = value.partition('=')
-        stage, colon, name = name.partition(':')
-        if not separator or not colon or stage not in STAGES or not number.isascii() or not number.isdigit():
-            raise ValueError('binding expects STAGE:NAME=SLOT')
+        name, separator, number = value.partition("=")
+        stage, colon, name = name.partition(":")
+        if (
+            not separator
+            or not colon
+            or stage not in STAGES
+            or not number.isascii()
+            or not number.isdigit()
+        ):
+            raise ValueError("binding expects STAGE:NAME=SLOT")
         identifier(name)
         key = stage, name
         if key in result:
-            raise ValueError(f'duplicate binding override: {stage}:{name}')
+            raise ValueError(f"duplicate binding override: {stage}:{name}")
         result[key] = int(number)
     return result
 
 
-def allocate_bindings(stages, policies, overrides=None):
-    """Build metadata from SPIR-V, reserving CLI slots before assigning the rest."""
-    overrides = overrides or {}
-    occupied = {space: set() for space in LIMITS}
-    resources, bindings = {}, []
-    discovered = sorted(((item['name'], stage, item) for stage, info in stages.items()
-                         for item in info['resources']), key=lambda value: value[:2])
-    for name, stage, item in discovered:
-        kind = item['kind']
-        if kind not in ('uniform', 'storage_buffer', 'storage_image', 'texture', 'sampler'):
-            raise ValueError(f'{name}: unsupported resource kind {kind}')
-        space = kind if kind in ('uniform', 'sampler') else 'view'
-        if (stage, name) in overrides:
-            slot = overrides[stage, name]
-            if not 0 <= slot < LIMITS[space]:
-                raise ValueError(f'{name}: slot must be in 0..{LIMITS[space] - 1}')
-            if slot in occupied[space]:
-                raise ValueError(f'duplicate {space} slot {slot}; Sokol slots are global across stages')
-            occupied[space].add(slot)
-    for name, stage, item in discovered:
-        identifier(name)
-        kind = item['kind']
-        field = {'texture': 'sample_type', 'sampler': 'sampler_type'}.get(kind)
-        policy = policies.get(name, {})
-        if field:
-            allowed = SAMPLE_TYPES if kind == 'texture' else SAMPLER_TYPES
-            if set(policy) - {field}:
-                raise ValueError(f'{name}: sampling policy does not match {kind}')
-            policy = {field: policy.get(field, item[field])}
-            if policy[field] not in allowed:
-                raise ValueError(f'{name}: invalid sampling policy')
-        elif policy:
-            raise ValueError(f'{name}: sampling policy is only valid for textures and samplers')
-        resource = resources.setdefault(name, dict(kind=kind, names={}, slots={}, **policy))
-        if resource['kind'] != kind or stage in resource['slots']:
-            raise ValueError(f'{name}: duplicate or conflicting stage resource')
-        # A shared resource must have one sampling policy in every stage.
-        if any(resource[key] != value for key, value in policy.items()):
-            raise ValueError(f'{name}: conflicting sampling policy across stages')
-        space = kind if kind in ('uniform', 'sampler') else 'view'
-        slot = overrides.get((stage, name))
-        if slot is None:
-            slot = next((i for i in range(LIMITS[space]) if i not in occupied[space]), None)
-            if slot is None:
-                raise ValueError(f'{name}: exceeds Sokol {space} binding limit')
-            occupied[space].add(slot)
-        resource['names'][stage] = name
-        resource['slots'][stage] = slot
-        for key in ('access', 'format'):
-            if key in item:
-                if key in resource and resource[key] != item[key]:
-                    raise ValueError(f'{name}: conflicting {key} across stages')
-                resource[key] = item[key]
-        binding = {key: value for key, value in item.items() if key not in ('sample_type', 'sampler_type')}
-        bindings.append(dict(binding, stage=stage, name=stage+'_'+name, slot=slot, **policy))
-    return resources, bindings
-
-
 def stage_names(program):
-    compute = 'compute' in program
-    if compute and ('vertex' in program or 'fragment' in program):
-        raise ValueError('choose vertex and fragment entries, or a compute entry')
-    stages = ('compute',) if compute else ('vertex', 'fragment')
-    for key in ('module', 'program', *stages):
-        identifier(program.get(key, ''))
+    compute = "compute" in program
+    if compute and ("vertex" in program or "fragment" in program):
+        raise ValueError("choose vertex and fragment entries, or a compute entry")
+    stages = ("compute",) if compute else ("vertex", "fragment")
+    for key in ("module", "program", *stages):
+        identifier(program.get(key, ""))
     return stages
 
 
 def select_programs(args, discovered):
-    stem = re.sub(r'[^A-Za-z_0-9]', '_', args.input.stem)
-    if stem[:1].isdigit(): stem = '_' + stem
+    stem = re.sub(r"[^A-Za-z_0-9]", "_", args.input.stem)
+    if stem[:1].isdigit():
+        stem = "_" + stem
     module = identifier(args.module or stem)
     selections = args.program
-    named = any(':' in value for value in selections)
+    named = any(":" in value for value in selections)
     direct = {stage: getattr(args, stage) for stage in STAGES if getattr(args, stage)}
     if named:
-        if direct or any(':' not in value for value in selections):
-            raise ValueError('program sets cannot mix --program NAME:ENTRIES with stage flags or bare names')
+        if direct or any(":" not in value for value in selections):
+            raise ValueError(
+                "program sets cannot mix --program NAME:ENTRIES with stage flags or bare names"
+            )
         programs = {}
         for value in selections:
-            fields = value.split(':')
+            fields = value.split(":")
             if len(fields) not in (2, 3):
-                raise ValueError('program expects NAME:VERTEX:FRAGMENT or NAME:COMPUTE')
+                raise ValueError("program expects NAME:VERTEX:FRAGMENT or NAME:COMPUTE")
             name, *entries = fields
             identifier(name)
             if name in programs:
-                raise ValueError(f'duplicate program: {name}')
-            stages = ('compute',) if len(entries) == 1 else ('vertex', 'fragment')
+                raise ValueError(f"duplicate program: {name}")
+            stages = ("compute",) if len(entries) == 1 else ("vertex", "fragment")
             programs[name] = dict(module=module, program=name, **dict(zip(stages, entries)))
         return programs, True
     if len(selections) > 1:
-        raise ValueError('supply one program name, or use NAME:ENTRIES for a program set')
+        raise ValueError("supply one program name, or use NAME:ENTRIES for a program set")
     if not direct:
         by_stage = {}
         for entry in discovered:
-            by_stage.setdefault(entry['stage'], []).append(entry['name'])
-        if set(by_stage) not in ({'vertex', 'fragment'}, {'compute'}) or any(len(v) != 1 for v in by_stage.values()):
-            raise ValueError('entry points are missing or ambiguous; select --vertex/--fragment, --compute, or --program NAME:ENTRIES')
+            by_stage.setdefault(entry["stage"], []).append(entry["name"])
+        if set(by_stage) not in ({"vertex", "fragment"}, {"compute"}) or any(
+            len(v) != 1 for v in by_stage.values()
+        ):
+            raise ValueError(
+                "entry points are missing or ambiguous; select --vertex/--fragment, --compute, or --program NAME:ENTRIES"
+            )
         direct = {stage: names[0] for stage, names in by_stage.items()}
-    name = identifier(selections[0] if selections else 'run' if 'compute' in direct else 'draw')
-    if 'compute' not in direct and set(direct) != {'vertex', 'fragment'}:
-        raise ValueError('raster programs require both --vertex and --fragment')
+    name = identifier(selections[0] if selections else "run" if "compute" in direct else "draw")
+    if "compute" not in direct and set(direct) != {"vertex", "fragment"}:
+        raise ValueError("raster programs require both --vertex and --fragment")
     program = dict(module=module, program=name, **direct)
     stage_names(program)
     return {name: program}, False
 
 
-def select_targets(targets, compute):
-    if targets is None:
-        targets = ('glsl430:glsl310es:' if compute else 'glsl410:glsl300es:') + 'hlsl5:metal_macos:metal_ios:metal_sim:wgsl:spirv_vk'
-    selected = targets.split(':')
-    supported = {'glsl410', 'glsl430', 'glsl300es', 'glsl310es', 'hlsl4', 'hlsl5',
-                 'metal_macos', 'metal_ios', 'metal_sim', 'wgsl', 'spirv_vk'}
-    if not selected or any(t not in supported for t in selected):
-        raise ValueError('unknown target; choose from ' + ', '.join(sorted(supported)))
-    if len(selected) != len(set(selected)):
-        raise ValueError('duplicate target')
-    for variants in ({'glsl410', 'glsl430'}, {'glsl300es', 'glsl310es'}, {'hlsl4', 'hlsl5'}):
-        if len(set(selected) & variants) > 1:
-            raise ValueError('choose one shader version per Sokol backend per header')
-    return selected
-
-
 def escape_dependency(path):
-    return str(path).replace('\\', '\\\\').replace(' ', '\\ ').replace('#', '\\#').replace('$', '$$')
+    return (
+        str(path).replace("\\", "\\\\").replace(" ", "\\ ").replace("#", "\\#").replace("$", "$$")
+    )
 
 
 def compile_programs(args):
     policies = {}
-    for name, value in parse_settings(args.sample_type, SAMPLE_TYPES, 'sample type').items():
+    for name, value in parse_settings(args.sample_type, SAMPLE_TYPES, "sample type").items():
         policies[name] = dict(sample_type=value)
-    for name, value in parse_settings(args.sampler_type, SAMPLER_TYPES, 'sampler type').items():
+    for name, value in parse_settings(args.sampler_type, SAMPLER_TYPES, "sampler type").items():
         if name in policies:
-            raise ValueError(f'{name}: resource cannot have both texture and sampler policies')
+            raise ValueError(f"{name}: resource cannot have both texture and sampler policies")
         policies[name] = dict(sampler_type=value)
     overrides = parse_slots(args.binding)
-    version = subprocess.check_output([args.slangc, '-version'], text=True, stderr=subprocess.STDOUT).strip()
-    if version != '2026.20':
-        raise ValueError(f'expected Slang 2026.20, got {version}')
+    version = subprocess.check_output(
+        [args.slangc, "-version"], text=True, stderr=subprocess.STDOUT
+    ).strip()
+    if version != "2026.20":
+        raise ValueError(f"expected Slang 2026.20, got {version}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    include_args = [arg for directory in args.include_dir for arg in ('-I', str(directory.resolve()))]
+    include_args = [
+        arg for directory in args.include_dir for arg in ("-I", str(directory.resolve()))
+    ]
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         work = Path(directory)
         # Let Slang discover marked entry points, including those in includes.
         # Explicit program selections skip this extra module compilation.
         discovered = []
-        if not any(getattr(args, stage) for stage in STAGES) and not any(':' in p for p in args.program):
-            module = work / 'entries.spv'
-            subprocess.run([args.slangc, args.input.resolve(), '-target', 'spirv', '-profile', 'spirv_1_3',
-                '-fvk-use-entrypoint-name', '-matrix-layout-column-major', '-fvk-use-gl-layout', '-g1',
-                '-o', module, *include_args], check=True)
-            discovered = json.loads(subprocess.check_output([args.core, '--inspect', module], text=True))['entries']
+        if not any(getattr(args, stage) for stage in STAGES) and not any(
+            ":" in p for p in args.program
+        ):
+            module = work / "entries.spv"
+            subprocess.run(
+                [
+                    args.slangc,
+                    args.input.resolve(),
+                    "-target",
+                    "spirv",
+                    "-profile",
+                    "spirv_1_3",
+                    "-fvk-use-entrypoint-name",
+                    "-matrix-layout-column-major",
+                    "-fvk-use-gl-layout",
+                    "-g1",
+                    "-o",
+                    module,
+                    *include_args,
+                ],
+                check=True,
+            )
+            discovered = json.loads(
+                subprocess.check_output([args.core, "--inspect", module], text=True)
+            )["entries"]
         programs, batch = select_programs(args, discovered)
-        compiled, reports, headers, used_overrides = {}, {}, [], set()
+        compiled, requests = {}, []
         for name, program in programs.items():
-            inspected, stages = {}, {}
+            stages = {}
             for stage in stage_names(program):
                 entry = program[stage]
                 key = stage, entry
                 if key not in compiled:
-                    binary, dependency = (work / f'{stage}_{entry}{suffix}' for suffix in ('.spv', '.d'))
-                    subprocess.run([args.slangc, args.input.resolve(), '-entry', entry,
-                        '-stage', stage, '-target', 'spirv', '-profile', 'spirv_1_3',
-                        '-matrix-layout-column-major', '-fvk-use-gl-layout', '-g1',
-                        '-o', binary, '-depfile', dependency, *include_args], check=True)
-                    info = json.loads(subprocess.check_output([args.core, '--inspect', binary], text=True))
-                    if len(info['entries']) != 1 or info['entries'][0]['stage'] != stage:
-                        raise ValueError(f'{entry}: expected one {stage} entry point')
-                    compiled[key] = binary, dependency, info
-                binary, dependency, info = compiled[key]
-                inspected[stage] = info
-                stages[stage] = dict(file=str(binary.resolve()), entry=info['entries'][0]['name'])
-                used_overrides.update((stage, item['name']) for item in info['resources'])
-            resources, bindings = allocate_bindings(inspected, policies, overrides)
-            manifest = dict(version=1, module=program['module'], program=program['program'],
-                            stages=stages, resources=bindings)
-            if 'compute' not in stages:
-                manifest['clip_depth'] = 'zero_to_one'
-            modern_gl = 'compute' in stages or any(b['kind'] in ('storage_buffer', 'storage_image') for b in bindings)
-            selected = select_targets(args.targets, modern_gl)
-            program_dir = work / name
-            program_dir.mkdir()
-            paths = [program_dir / filename for filename in
-                     ('manifest.json', args.output.name, 'reflection.json', 'shader.d')]
-            metadata, header, report, depfile = paths
-            metadata.write_text(json.dumps(manifest, indent=2)+'\n')
-            subprocess.run([args.core, '--manifest', metadata, '--output', header,
-                '--reflection', report, '--depfile', depfile, '--targets', ':'.join(selected)], check=True)
-            reflection = json.loads(report.read_text())
-            reflection['resources'] = resources
-            reflection['compiler'] = dict(slang=version, targets=selected,
-                                          matrix_layout='column-major', buffer_layout='gl')
-            headers.append(header.read_bytes())
-            reports[name] = reflection
-            if args.emit_spirv_dir:
-                exported = args.emit_spirv_dir / name if batch else args.emit_spirv_dir
-                exported.mkdir(parents=True, exist_ok=True)
-                exported_stages = {}
-                for stage, info in stages.items():
-                    filename = stage+'.spv'
-                    shutil.copyfile(info['file'], exported / filename)
-                    exported_stages[stage] = dict(info, file=filename)
-                (exported / 'manifest.json').write_text(json.dumps(dict(manifest, stages=exported_stages), indent=2)+'\n')
-        unused = set(overrides) - used_overrides
-        if unused:
-            raise ValueError('binding override names no reflected resource: ' + ', '.join(f'{s}:{n}' for s, n in sorted(unused)))
-        # Publish after every program and override passes validation.
-        dependencies = [args.input.resolve(), Path(__file__).resolve(), args.slangc.resolve(), args.core.resolve()]
-        dep_lines = [dependency.read_text().split(': ', 1)[1].strip()
-                     for _, dependency, _ in compiled.values()]
-        args.output.write_bytes(b'\n'.join(headers))
-        args.reflection.write_text(json.dumps(reports if batch else next(iter(reports.values())), indent=2)+'\n')
-        args.depfile.write_text(escape_dependency(args.output)+': '+
-            ' '.join(map(escape_dependency, dependencies))+' '+' '.join(dep_lines)+'\n')
+                    binary, dependency = (
+                        work / f"{stage}_{entry}{suffix}" for suffix in (".spv", ".d")
+                    )
+                    subprocess.run(
+                        [
+                            args.slangc,
+                            args.input.resolve(),
+                            "-entry",
+                            entry,
+                            "-stage",
+                            stage,
+                            "-target",
+                            "spirv",
+                            "-profile",
+                            "spirv_1_3",
+                            "-matrix-layout-column-major",
+                            "-fvk-use-gl-layout",
+                            "-g1",
+                            "-o",
+                            binary,
+                            "-depfile",
+                            dependency,
+                            *include_args,
+                        ],
+                        check=True,
+                    )
+                    info = json.loads(
+                        subprocess.check_output([args.core, "--inspect", binary], text=True)
+                    )
+                    if len(info["entries"]) != 1 or info["entries"][0]["stage"] != stage:
+                        raise ValueError(f"{entry}: expected one {stage} entry point")
+                    compiled[key] = binary, dependency, info["entries"][0]["name"]
+                binary, dependency, native_entry = compiled[key]
+                stages[stage] = dict(file=str(binary.resolve()), entry=native_entry)
+            request = dict(program=name, stages=stages)
+            if "compute" not in stages:
+                request["clip_depth"] = "zero_to_one"
+            requests.append(request)
+        manifest = dict(version=1, module=next(iter(programs.values()))["module"])
+        if batch:
+            manifest["programs"] = requests
+        else:
+            manifest.update(requests[0])
+        if policies:
+            manifest["policies"] = policies
+        if overrides:
+            manifest["bindings"] = [
+                dict(stage=stage, name=name, slot=slot)
+                for (stage, name), slot in sorted(overrides.items())
+            ]
+        metadata, header, report = (
+            work / filename for filename in ("manifest.json", args.output.name, "reflection.json")
+        )
+        metadata.write_text(json.dumps(manifest, indent=2) + "\n")
+        command = [
+            args.core,
+            "--manifest",
+            metadata,
+            "--output",
+            header,
+            "--reflection",
+            report,
+            "--depfile",
+            work / "shader.d",
+        ]
+        if args.targets is not None:
+            command += ["--targets", args.targets]
+        if args.source_output:
+            command += ["--source"]
+        subprocess.run(command, check=True)
+        reflection = json.loads(report.read_text())
+        reports = reflection.values() if batch else [reflection]
+        for item in reports:
+            item["compiler"] = dict(
+                slang=version,
+                targets=list(item["targets"]),
+                matrix_layout="column-major",
+                buffer_layout="gl",
+            )
+        if args.emit_spirv_dir:
+            exported = args.emit_spirv_dir
+            exported.mkdir(parents=True, exist_ok=True)
+            portable = json.loads(json.dumps(manifest))
+            for request in portable["programs"] if batch else [portable]:
+                for stage, info in request["stages"].items():
+                    source = Path(info["file"])
+                    filename = source.name if batch else stage + ".spv"
+                    shutil.copyfile(source, exported / filename)
+                    info["file"] = filename
+            (exported / "manifest.json").write_text(json.dumps(portable, indent=2) + "\n")
+        dependencies = [
+            args.input.resolve(),
+            Path(__file__).resolve(),
+            args.slangc.resolve(),
+            args.core.resolve(),
+        ]
+        dep_lines = [
+            dependency.read_text().split(": ", 1)[1].strip()
+            for _, dependency, _ in compiled.values()
+        ]
+        args.output.write_bytes(header.read_bytes())
+        args.reflection.write_text(json.dumps(reflection, indent=2) + "\n")
+        args.depfile.write_text(
+            escape_dependency(args.output)
+            + ": "
+            + " ".join(map(escape_dependency, dependencies))
+            + " "
+            + " ".join(dep_lines)
+            + "\n"
+        )
 
 
 def find_tool(name, override=None):
-    executable = name + ('.exe' if sys.platform == 'win32' else '')
+    executable = name + (".exe" if sys.platform == "win32" else "")
     if override is not None:
         found = shutil.which(str(override))
         if found:
             return Path(found).resolve()
-        raise ValueError(f'cannot execute {override}')
+        raise ValueError(f"cannot execute {override}")
     sibling = Path(__file__).resolve().parent / executable
     if sibling.is_file() and shutil.which(str(sibling)):
         return sibling
@@ -283,66 +304,99 @@ def find_tool(name, override=None):
         return Path(found).resolve()
     root = Path(__file__).resolve().parents[1]
     candidates = []
-    if name == 'sokol-spirv':
-        candidates = [root / build / executable for build in ('build', 'build-all')]
-    elif name == 'slangc':
-        system = {'darwin': 'macos', 'win32': 'windows'}.get(sys.platform, sys.platform)
+    if name == "sokol-spirv":
+        candidates = [root / build / executable for build in ("build", "build-all")]
+    elif name == "slangc":
+        system = {"darwin": "macos", "win32": "windows"}.get(sys.platform, sys.platform)
         machine = platform.machine().lower()
-        cpu = {'arm64': 'aarch64', 'amd64': 'x86_64'}.get(machine, machine)
-        candidates = [root / 'subprojects' / f'slang-{system}-{cpu}-2026.20' / 'bin' / executable]
+        cpu = {"arm64": "aarch64", "amd64": "x86_64"}.get(machine, machine)
+        candidates = [root / "subprojects" / f"slang-{system}-{cpu}-2026.20" / "bin" / executable]
     for candidate in candidates:
         if candidate.is_file() and shutil.which(str(candidate)):
             return candidate
-    flag = 'core' if name == 'sokol-spirv' else name
-    raise ValueError(f'{name} not found; install it on PATH or pass --{flag} /path/to/{executable}')
+    flag = "core" if name == "sokol-spirv" else name
+    raise ValueError(f"{name} not found; install it on PATH or pass --{flag} /path/to/{executable}")
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', nargs='?', type=Path)
-    parser.add_argument('-i', '--input', type=Path)
-    parser.add_argument('-o', '--output', type=Path, help='Header path (default: input with .h suffix)')
-    parser.add_argument('--module', help='Generated symbol prefix (default: input filename stem)')
-    parser.add_argument('--program', action='append', default=[], metavar='NAME[:ENTRIES]',
-                        help='Program name, or repeat NAME:VERTEX:FRAGMENT / NAME:COMPUTE')
+    parser.add_argument("source", nargs="?", type=Path)
+    parser.add_argument("-i", "--input", type=Path)
+    parser.add_argument(
+        "-o", "--output", type=Path, help="Header path (default: input with .h suffix)"
+    )
+    parser.add_argument("--module", help="Generated symbol prefix (default: input filename stem)")
+    parser.add_argument(
+        "--program",
+        action="append",
+        default=[],
+        metavar="NAME[:ENTRIES]",
+        help="Program name, or repeat NAME:VERTEX:FRAGMENT / NAME:COMPUTE",
+    )
     for stage in STAGES:
-        parser.add_argument('--'+stage, metavar='ENTRY', help='Select the '+stage+' entry point')
-    parser.add_argument('--sample-type', action='append', default=[], metavar='NAME=TYPE', help='Override texture sampling policy')
-    parser.add_argument('--sampler-type', action='append', default=[], metavar='NAME=TYPE', help='Override sampler filtering policy')
-    parser.add_argument('--binding', action='append', default=[], metavar='STAGE:NAME=SLOT', help='Reserve a Sokol binding slot')
-    parser.add_argument('--targets', help='Colon-separated output dialects')
-    parser.add_argument('--core', type=Path, help='sokol-spirv executable (auto-detected)')
-    parser.add_argument('--slangc', type=Path, help='Slang 2026.20 compiler (auto-detected)')
-    parser.add_argument('--reflection', type=Path)
-    parser.add_argument('--depfile', type=Path)
-    parser.add_argument('--emit-spirv-dir', type=Path)
-    parser.add_argument('-I', '--include-dir', action='append', type=Path, default=[])
+        parser.add_argument(
+            "--" + stage, metavar="ENTRY", help="Select the " + stage + " entry point"
+        )
+    parser.add_argument(
+        "--sample-type",
+        action="append",
+        default=[],
+        metavar="NAME=TYPE",
+        help="Override texture sampling policy",
+    )
+    parser.add_argument(
+        "--sampler-type",
+        action="append",
+        default=[],
+        metavar="NAME=TYPE",
+        help="Override sampler filtering policy",
+    )
+    parser.add_argument(
+        "--binding",
+        action="append",
+        default=[],
+        metavar="STAGE:NAME=SLOT",
+        help="Reserve a Sokol binding slot",
+    )
+    parser.add_argument("--targets", help="Colon-separated output dialects")
+    parser.add_argument(
+        "--source",
+        dest="source_output",
+        action="store_true",
+        help="Emit native Metal/HLSL source instead of build-time bytecode",
+    )
+    parser.add_argument("--core", type=Path, help="sokol-spirv executable (auto-detected)")
+    parser.add_argument("--slangc", type=Path, help="Slang 2026.20 compiler (auto-detected)")
+    parser.add_argument("--reflection", type=Path)
+    parser.add_argument("--depfile", type=Path)
+    parser.add_argument("--emit-spirv-dir", type=Path)
+    parser.add_argument("-I", "--include-dir", action="append", type=Path, default=[])
     args = parser.parse_args(argv)
     if bool(args.source) == bool(args.input):
-        parser.error('supply one Slang source file, either positional or with --input')
+        parser.error("supply one Slang source file, either positional or with --input")
     args.input = args.input or args.source
-    args.output = args.output or args.input.with_suffix('.h')
+    args.output = args.output or args.input.with_suffix(".h")
     if args.output.resolve() == args.input.resolve():
-        parser.error('output must not overwrite the shader input')
+        parser.error("output must not overwrite the shader input")
     return args
 
 
 def main(argv=None):
     args = parse_args(argv)
-    args.core = find_tool('sokol-spirv', args.core)
-    args.slangc = find_tool('slangc', args.slangc)
+    args.core = find_tool("sokol-spirv", args.core)
+    args.slangc = find_tool("slangc", args.slangc)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Sidecars remain optional; manifests are generated inside the compiler.
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
-        args.reflection = args.reflection or Path(directory) / 'reflection.json'
-        args.depfile = args.depfile or Path(directory) / 'shader.d'
+        args.reflection = args.reflection or Path(directory) / "reflection.json"
+        args.depfile = args.depfile or Path(directory) / "shader.d"
         compile_programs(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as error:
         sys.exit(error.returncode if error.returncode > 0 else 1)
     except (KeyError, TypeError, ValueError, OSError) as error:
-        sys.exit(f'sokol-slang: {error}')
+        sys.exit(f"sokol-slang: {error}")

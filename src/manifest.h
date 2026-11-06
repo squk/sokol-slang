@@ -1,8 +1,8 @@
 #pragma once
 #include <filesystem>
 #include <map>
-#include <string>
 #include <nlohmann/json.hpp>
+#include <string>
 
 using Json = nlohmann::json;
 
@@ -18,12 +18,14 @@ struct Binding {
     std::string format;
 };
 
-// Manifest validates the embedded schema and cross-resource rules before the
-// compiler opens any SPIR-V files. File paths resolve beside the manifest.
+// Read validates the input contract; from_document validates the core's resolved
+// resources. File paths resolve beside the manifest.
 struct Manifest {
     Json document;
     std::filesystem::path path;
     std::map<std::string, Binding> bindings;
-    static Manifest load(const std::filesystem::path& path);
-    std::filesystem::path stage_path(const std::string& stage) const;
+    static void validate_document(const Json &document);
+    static Json read(const std::filesystem::path &path);
+    static Manifest from_document(Json document, const std::filesystem::path &path);
+    std::filesystem::path stage_path(const std::string &stage) const;
 };

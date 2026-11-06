@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "module": "programset",
+  "programs": [
+    {
+      "program": "base",
+      "clip_depth": "zero_to_one",
+      "stages": {
+        "vertex": {"file": "generic_vertex.spv", "entry": "main"},
+        "fragment": {"file": "generic_fragment.spv", "entry": "main"}
+      }
+    },
+    {
+      "program": "full",
+      "clip_depth": "zero_to_one",
+      "stages": {
+        "vertex": {"file": "generic_vertex.spv", "entry": "main"},
+        "fragment": {"file": "generic_fragment.spv", "entry": "main"}
+      }
+    },
+    {
+      "program": "work",
+      "stages": {"compute": {"file": "generic_compute.spv", "entry": "main"}}
+    }
+  ]
+}

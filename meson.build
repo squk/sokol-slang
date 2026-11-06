@@ -21,7 +21,7 @@ tint_dep = subproject('tint').get_variable('tint_dep')
 json_dep = subproject('json').get_variable('json_dep')
 manifest_schema = custom_target('manifest-schema', input: 'schema/manifest.schema.json',
   output: 'manifest_schema.h', command: [python, files('tools/embed_schema.py'), '@INPUT@', '@OUTPUT@'])
-core = executable('sokol-spirv', 'src/adapter.cc', 'src/manifest.cc', manifest_schema,
+core = executable('sokol-spirv', 'src/sokol_spirv.cc', 'src/manifest.cc', 'src/program_bindings.cc', 'src/native_bytecode.cc', manifest_schema,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep],
   native: true, install: not meson.is_subproject() and not meson.is_cross_build())
 
@@ -53,6 +53,12 @@ if get_option('slang')
 endif
 
 test_source = 'tests/test_app.cc'
+native_bytecode_args = []
+if build_machine.system() == 'darwin'
+  native_bytecode_args = ['-DEXPECT_METAL_BYTECODE']
+elif build_machine.system() == 'windows'
+  native_bytecode_args = ['-DEXPECT_DXBC_BYTECODE']
+endif
 if host_machine.system() == 'darwin'
   app_frameworks = macos_host ? ['Cocoa', 'QuartzCore'] : ['Foundation', 'UIKit', 'QuartzCore', 'CoreGraphics']
 endif
@@ -156,7 +162,7 @@ if get_option('slang')
     depend_files: files('tools/sokol-slang'),
     command: slang_command + ['--module', 'portable'])
   portable_descriptors = executable('portable-descriptors', 'tests/descriptors.cc', portable_header,
-    cpp_args: ['-DSHADER_HEADER="portable.h"'], dependencies: sokol_dep)
+    cpp_args: ['-DSHADER_HEADER="portable.h"'] + native_bytecode_args, dependencies: sokol_dep)
   test('portable-descriptors', portable_descriptors)
   if host_machine.system() == 'windows'
     d3d11_proof = executable('d3d11-proof', test_source, portable_header,
@@ -261,9 +267,25 @@ if glslang.found()
   generic_header = custom_target('generic-shader', input: [generic_manifest, generic_vertex, generic_fragment],
     output: ['generic.h', 'generic.reflection.json'], depfile: 'generic.d',
     command: core_command)
+  if build_machine.system() in ['darwin', 'windows']
+    test('native-bytecode', python, args: [files('tests/test_native_bytecode.py'),
+      '--core', core.full_path(), '--manifest', generic_manifest],
+      depends: [core, generic_vertex, generic_fragment], timeout: 120)
+  endif
   generic_descriptors = executable('generic-descriptors', 'tests/descriptors.cc', generic_header,
-    cpp_args: ['-DSHADER_HEADER="generic.h"'], dependencies: sokol_dep)
+    cpp_args: ['-DSHADER_HEADER="generic.h"'] + native_bytecode_args, dependencies: sokol_dep)
   test('generic-descriptors', generic_descriptors)
+  program_set_manifest = configure_file(input: 'tests/fixtures/program_set.json', output: 'program_set.json', copy: true)
+  program_set_header = custom_target('program-set-shader',
+    input: [program_set_manifest, generic_vertex, generic_fragment, generic_compute_spirv],
+    output: ['program_set.h', 'program_set.reflection.json'], depfile: 'program_set.d',
+    command: core_command)
+  program_set_descriptors = executable('program-set-descriptors', 'tests/program_set_descriptors.cc', program_set_header,
+    dependencies: sokol_dep)
+  test('program-set-descriptors', program_set_descriptors)
+  test('program-set-contract', python, args: [files('tests/test_program_sets.py'),
+    '--core', core.full_path(), '--manifest', program_set_manifest],
+    depends: [core, generic_vertex, generic_fragment, generic_compute_spirv], timeout: 120)
   if host_machine.system() == 'windows'
     generic_d3d11_proof = executable('generic-d3d11-proof', test_source, generic_header,
       cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="generic.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
@@ -557,19 +579,13 @@ foreach group : [['depth', depth_headers], ['varyings', varyings_headers]]
   endforeach
 endforeach
 
-if host_machine.system() == 'darwin'
-  metal_path = run_command('xcrun', '--find', 'metal', check: false)
-  metal = find_program(metal_path.returncode() == 0 ? metal_path.stdout().strip() : 'metal', required: false, native: true)
-  if metal.found() and run_command(metal, '--version', check: false).returncode() == 0
-    if get_option('slang')
-      test('metal-compile', python, args: [files('tests/test_metal_compile.py'), '--metal', metal.full_path(),
-        proof_header[0], portable_header[0], compute_header[0], storage_image_header[0], depth_header[0]], depends: [proof_header, portable_header, compute_header, storage_image_header, depth_header], timeout: 120)
-    endif
-    if glslang.found()
-      test('generic-metal-compile', python, args: [files('tests/test_metal_compile.py'), '--metal', metal.full_path(),
-        generic_header[0], generic_compute_header[0], generic_storage_image_header[0], generic_depth_header[0]], depends: [generic_header, generic_compute_header, generic_storage_image_header, generic_depth_header], timeout: 120)
-    endif
-  else
-    warning('Apple Metal compiler unavailable: target compilation tests disabled. Install the Metal Toolchain component in Xcode.')
+if build_machine.system() == 'darwin'
+  if get_option('slang')
+    test('metal-compile', python, args: [files('tests/test_metal_compile.py'),
+      proof_header[0], portable_header[0], compute_header[0], storage_image_header[0], depth_header[0]], depends: [proof_header, portable_header, compute_header, storage_image_header, depth_header], timeout: 120)
+  endif
+  if glslang.found()
+    test('generic-metal-compile', python, args: [files('tests/test_metal_compile.py'),
+      generic_header[0], generic_compute_header[0], generic_storage_image_header[0], generic_depth_header[0]], depends: [generic_header, generic_compute_header, generic_storage_image_header, generic_depth_header], timeout: 120)
   endif
 endif

@@ -89,21 +89,48 @@ x86-64/ARM64. Override selection with `-Dslangc=/path/to/slangc` (version 2026.2
 ## SPIR-V interface
 
 ```sh
-build/sokol-spirv --manifest program.json \
-  --output build/shader.h --reflection build/shader.json --depfile build/shader.d
+build/sokol-spirv --vertex vertex.spv --fragment fragment.spv -o build/shader.h
+build/sokol-spirv --compute compute.spv -o build/compute.h
 build/sokol-spirv --inspect shader.spv
 ```
 
-The [version 1 schema](../schema/manifest.schema.json) defines the contract;
-see [raster](../tests/fixtures/portable/glsl/manifest.json) and
-[compute](../tests/fixtures/compute/glsl/manifest.json) manifests. Unknown/duplicate
-fields, invalid types, missing resources, and binding collisions are errors.
+The core discovers entry points and resources directly from the stage files and
+assigns slots. The output filename supplies the module name; the program defaults
+to `draw` or `run`. `--module` and `--program` override naming. `--binding`,
+`--sample-type`, and `--sampler-type` accept the same constraints as the Slang
+frontend. `--reflection FILE` and `--depfile FILE` are optional outputs.
+
+Use `--manifest programs.json` for program sets or saved build inputs. A single
+program can also be recorded in that form:
+
+```json
+{
+  "version": 1,
+  "module": "example",
+  "program": "draw",
+  "clip_depth": "zero_to_one",
+  "stages": {
+    "vertex": {"file": "vertex.spv", "entry": "main"},
+    "fragment": {"file": "fragment.spv", "entry": "main"}
+  }
+}
+```
+
+A compute program uses `"stages": {"compute": {"file": "compute.spv", "entry": "main"}}`
+and omits `clip_depth`. `policies` and `bindings` are optional caller constraints;
+shader resource kinds, descriptors, access and storage formats come from SPIR-V.
+The [version 1 schema](../schema/manifest.schema.json) defines both single programs
+and a `programs` array using the same stage contract. Unknown/duplicate fields,
+invalid types, and binding collisions are errors.
 
 - A program has vertex/fragment stages or one compute stage. Each SPIR-V module
   has one entry point; paths are relative to the manifest. SPIR-V through 1.3 is
   validated, and entry names are normalized to `main`.
-- Resources match by stage, descriptor set, and binding. Public names come from
-  metadata. Stripped members/attributes receive `member_N`/`input_N` names.
+- Public resource names come from SPIR-V. The optional resolved `resources` form
+  supports authored aliases and SPIR-V without resource debug names; it is used
+  by the explicit [raster](../tests/fixtures/portable/glsl/manifest.json) and
+  [compute](../tests/fixtures/compute/glsl/manifest.json) contract fixtures.
+  Stripped members/attributes receive `member_N`/`input_N` names.
 - Uniform, sampler, and view slots are separate global namespaces. Textures,
   storage buffers, and storage images share view slots. Each stage use needs its
   own Sokol slot; source descriptor numbers need not match native bindings.
@@ -174,8 +201,18 @@ Compute defaults use `glsl430`/`glsl310es`; WebGL2 and macOS OpenGL cannot dispa
 compute. Dialect selection cannot add runtime capabilities. Pinned Sokol has no
 D3D12 backend; its Vulkan backend is experimental.
 
-SPIRV-Cross emits GLSL/HLSL/MSL, Tint emits WGSL, and Vulkan embeds remapped SPIR-V
-validated for Vulkan 1.1. Metal/D3D11 compile generated source at runtime.
+Native builds embed Metal libraries on macOS (including iOS and simulator
+variants), DXBC on Windows, and remapped SPIR-V for Vulkan on every platform.
+Metal requires Xcode's Metal Toolchain; D3D11 requires `d3dcompiler_47.dll` on the
+build machine. Compilation failures stop generation and preserve the old header.
+These descriptors contain bytecode without Metal/HLSL source arrays.
+
+OpenGL/GLES use GLSL and WebGPU uses WGSL: Sokol requires source for those
+backends, so driver/browser compilation still happens at runtime. Tint validates
+WGSL during generation; compiler tests validate GLSL with `glslangValidator`.
+Cross-platform outputs retain Metal/HLSL source when the native compiler cannot
+run on the build OS. Both tools accept `--source` to explicitly emit native
+Metal/HLSL source for inspection; Vulkan always embeds validated SPIR-V.
 JSON reports separate source-layout `spirv` reflection from native `bindings` and
 `entry`. Use native binding records for runtime slots.
 
