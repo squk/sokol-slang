@@ -46,23 +46,20 @@ if get_option('slang')
     slangc = subproject('slang-' + slang_platform + '-' + slang_cpu).get_variable('slangc')
   endif
 endif
-# The editor links Slang in-process. Cross-built players consume cooked data;
-# they must not link the build machine's Slang SDK.
-if get_option('compiler_library')
-  if not get_option('slang') or meson.is_cross_build()
-    error('compiler_library requires Slang and a native editor/tool build')
-  endif
+# The CLI and native editor/tool callers share the build-machine Slang library.
+# Cross-built players consume cooked data and never link this dependency.
+if get_option('compiler_library') and get_option('slang')
   slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
   slang_sdk_include = include_directories(slang_sdk_root / 'include')
-  slang_sdk_library = meson.get_compiler('cpp').find_library('slang', dirs: slang_sdk_root / 'lib')
+  slang_sdk_library = meson.get_compiler('cpp', native: true).find_library('slang', dirs: slang_sdk_root / 'lib', native: true)
   source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
-    include_directories: slang_sdk_include, dependencies: slang_sdk_library)
+    include_directories: slang_sdk_include, dependencies: slang_sdk_library, native: true)
   source_compiler_dep = declare_dependency(link_with: source_compiler,
     include_directories: include_directories('src'), dependencies: slang_sdk_library)
 endif
 core_dependencies = [backend_compiler_dep]
 core_defines = []
-if get_option('compiler_library')
+if get_option('compiler_library') and get_option('slang')
   core_dependencies += source_compiler_dep
   core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
 endif
@@ -77,7 +74,7 @@ endif
 core_command = [core, '--manifest', '@INPUT0@', '--output', '@OUTPUT0@',
   '--reflection', '@OUTPUT1@', '--depfile', '@DEPFILE@']
 if get_option('slang')
-  slang_command = [python, slang_frontend, '--slangc', slangc, '--core', core,
+  slang_command = [python, slang_frontend, '--core', core,
     '--input', '@INPUT0@', '--output', '@OUTPUT0@',
     '--reflection', '@OUTPUT1@', '--depfile', '@DEPFILE@']
 endif
@@ -158,7 +155,7 @@ if get_option('slang')
     test('metal-proof', proof)
   endif
 
-  test('compiler-contract', python, args: [files('tests/test_compiler.py'), '--slangc', slangc.full_path(), '--core', core.full_path()], depends: core, timeout: 60)
+  test('compiler-contract', python, args: [files('tests/test_compiler.py'), '--core', core.full_path()], depends: core, timeout: 60)
 
   compute_header = custom_target('compute-shader', input: 'tests/fixtures/compute/shader.slang',
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',

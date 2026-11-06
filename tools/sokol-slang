@@ -4,8 +4,8 @@
 import argparse
 import json
 from pathlib import Path
-import platform
 import re
+import struct
 import shutil
 import subprocess
 import sys
@@ -130,66 +130,66 @@ def compile_programs(args):
             raise ValueError(f"{name}: resource cannot have both texture and sampler policies")
         policies[name] = dict(sampler_type=value)
     overrides = parse_slots(args.binding)
-    version = subprocess.check_output(
-        [args.slangc, "-version"], text=True, stderr=subprocess.STDOUT
-    ).strip()
-    if version != "2026.20":
-        raise ValueError(f"expected Slang 2026.20, got {version}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    slang_command = [
-        args.slangc,
-        args.input.resolve(),
-        "-target",
-        "spirv",
-        "-profile",
-        "spirv_1_3",
-        "-fvk-use-entrypoint-name",
-        "-matrix-layout-column-major",
-        "-fvk-use-gl-layout",
-        "-g1",
-        *[arg for directory in args.include_dir for arg in ("-I", str(directory.resolve()))],
-    ]
+    roots = [args.input.resolve().parent, *[p.resolve() for p in args.include_dir]]
+    source_path = args.input.resolve()
+    suffixes = {".slang", ".slangh", ".hlsl", ".hlsli", ".glsl", ".inc", ".h"}
+    files = {}
+    for root in roots:
+        if root.is_dir():
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and path.suffix in suffixes and path.resolve() != source_path:
+                    files[str(path.resolve())] = path.read_text()
+    for path in args.capture_source:
+        files[str(path.resolve())] = path.read_text()
+    files.pop(str(source_path), None)
+    captured = dict(
+        version=1,
+        module_name=args.module or "source_module",
+        source_path=str(source_path),
+        source=source_path.read_text(),
+        search_paths=[str(p) for p in roots],
+        files=files,
+    )
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         work = Path(directory)
-        # Let Slang discover marked entry points, including those in includes.
-        # Explicit program selections skip this extra module compilation.
-        discovered = []
-        if not any(getattr(args, stage) for stage in STAGES) and not any(
-            ":" in p for p in args.program
-        ):
-            module = work / "entries.spv"
-            subprocess.run([*slang_command, "-o", module], check=True)
-            discovered = json.loads(
-                subprocess.check_output([args.core, "--inspect", module], text=True)
-            )["entries"]
+        request_path, result_path = work / "source.json", work / "source-result.json"
+
+        def compile_entries(entries):
+            request_path.write_text(json.dumps(dict(captured, entry_points=entries)))
+            completed = subprocess.run(
+                [args.core, "--source-request", request_path, "--output", result_path]
+            )
+            if not result_path.is_file():
+                raise subprocess.CalledProcessError(completed.returncode or 1, completed.args)
+            result = json.loads(result_path.read_text())
+            for diagnostic in result.get("diagnostics", []):
+                print(diagnostic["text"], file=sys.stderr)
+            if completed.returncode or not result["succeeded"]:
+                raise subprocess.CalledProcessError(completed.returncode or 1, completed.args)
+            return result
+
+        direct = [getattr(args, stage) for stage in STAGES if getattr(args, stage)]
+        explicit = [entry for p in args.program if ":" in p for entry in p.split(":")[1:]]
+        result = compile_entries(list(dict.fromkeys(direct + explicit)))
+        version = result["compiler"]
+        discovered = [dict(name=s["entry"], stage=s["stage"]) for s in result["stages"]]
         programs, batch = select_programs(args, discovered)
+        available = {(s["stage"], s["entry"]): s for s in result["stages"]}
         compiled, requests = {}, []
         for name, program in programs.items():
             stages = {}
             for stage in stage_names(program):
                 entry = program[stage]
                 key = stage, entry
+                if key not in available:
+                    raise ValueError(f"Missing {stage} entry point: {entry}")
                 if key not in compiled:
-                    binary, dependency = (
-                        work / f"{stage}_{entry}{suffix}" for suffix in (".spv", ".d")
-                    )
-                    subprocess.run(
-                        [
-                            *slang_command,
-                            "-entry",
-                            entry,
-                            "-stage",
-                            stage,
-                            "-o",
-                            binary,
-                            "-depfile",
-                            dependency,
-                        ],
-                        check=True,
-                    )
-                    compiled[key] = binary, dependency
-                binary, _ = compiled[key]
-                stages[stage] = dict(file=str(binary.resolve()), entry=entry)
+                    binary = work / f"{stage}_{entry}.spv"
+                    words = available[key]["spirv"]
+                    binary.write_bytes(struct.pack("<" + "I" * len(words), *words))
+                    compiled[key] = binary
+                stages[stage] = dict(file=str(compiled[key].resolve()), entry=entry)
             request = dict(program=name, stages=stages)
             if "compute" not in stages:
                 request["clip_depth"] = "zero_to_one"
@@ -251,19 +251,13 @@ def compile_programs(args):
             dependencies = [
                 args.input.resolve(),
                 Path(__file__).resolve(),
-                args.slangc.resolve(),
                 args.core.resolve(),
             ]
-            dep_lines = [
-                dependency.read_text().split(": ", 1)[1].strip()
-                for _, dependency in compiled.values()
-            ]
+            dependencies += [Path(path) for path in result["dependencies"]]
             args.depfile.write_text(
                 escape_dependency(args.output)
                 + ": "
                 + " ".join(map(escape_dependency, dependencies))
-                + " "
-                + " ".join(dep_lines)
                 + "\n"
             )
 
@@ -285,11 +279,6 @@ def find_tool(name, override=None):
     candidates = []
     if name == "sokol-spirv":
         candidates = [root / build / executable for build in ("build", "build-all")]
-    elif name == "slangc":
-        system = {"darwin": "macos", "win32": "windows"}.get(sys.platform, sys.platform)
-        machine = platform.machine().lower()
-        cpu = {"arm64": "aarch64", "amd64": "x86_64"}.get(machine, machine)
-        candidates = [root / "subprojects" / f"slang-{system}-{cpu}-2026.20" / "bin" / executable]
     for candidate in candidates:
         if candidate.is_file() and shutil.which(str(candidate)):
             return candidate
@@ -345,11 +334,17 @@ def parse_args(argv=None):
         help="Emit native Metal/HLSL source instead of build-time bytecode",
     )
     parser.add_argument("--core", type=Path, help="sokol-spirv executable (auto-detected)")
-    parser.add_argument("--slangc", type=Path, help="Slang 2026.20 compiler (auto-detected)")
     parser.add_argument("--reflection", type=Path)
     parser.add_argument("--depfile", type=Path)
     parser.add_argument("--emit-spirv-dir", type=Path)
     parser.add_argument("-I", "--include-dir", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--capture-source",
+        action="append",
+        type=Path,
+        default=[],
+        help="Capture an include with a nonstandard filename suffix",
+    )
     args = parser.parse_args(argv)
     if bool(args.source) == bool(args.input):
         parser.error("supply one Slang source file, either positional or with --input")
@@ -363,7 +358,6 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
     args.core = find_tool("sokol-spirv", args.core)
-    args.slangc = find_tool("slangc", args.slangc)
     compile_programs(args)
 
 

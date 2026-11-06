@@ -27,7 +27,9 @@ python3 tools/sokol-slang examples/triangle/shader.slang \
 A shader alone is enough: `sokol-slang shader.slang` writes `shader.h`.
 Entry points, resource types, and bindings come from reflection.
 
-Tools are discovered automatically; override with `--slangc` or `--core`.
+The frontend discovers `sokol-spirv` automatically; override with `--core`.
+Slang source compilation runs through its linked compiler library. Select the
+Slang SDK at Meson setup with `-Dslangc=/path/to/slangc`.
 Use `--targets` to select backends and `-I` for imports/includes.
 
 [Examples](examples/README.md) · [Docker tests](docs/reference.md#docker) · [Reference](docs/reference.md)

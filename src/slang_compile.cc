@@ -102,10 +102,8 @@ SourceResult compile_source(const SourceRequest &request) {
         if (blob && blob->getBufferSize())
             result.diagnostics.push_back({phase, blob_text(blob)});
     };
-    if (request.module_name.empty() || request.entry_points.empty() ||
-        request.source.find('\0') != std::string::npos)
-        return fail("input",
-                    "Supply a module name, entry points and source without embedded null bytes");
+    if (request.module_name.empty() || request.source.find('\0') != std::string::npos)
+        return fail("input", "Supply a module name and source without embedded null bytes");
     std::set<std::string> names;
     for (const auto &name : request.entry_points)
         if (name.empty() || !names.insert(name).second)
@@ -161,11 +159,22 @@ SourceResult compile_source(const SourceRequest &request) {
     diagnostic("load", messages);
     if (!module)
         return result;
+    auto entry_names = request.entry_points;
+    if (entry_names.empty()) {
+        for (int i = 0; i < module->getDefinedEntryPointCount(); ++i) {
+            Slang::ComPtr<slang::IEntryPoint> entry;
+            if (SLANG_FAILED(module->getDefinedEntryPoint(i, entry.writeRef())))
+                return fail("entry", "Cannot inspect defined entry point");
+            entry_names.emplace_back(entry->getFunctionReflection()->getName());
+        }
+        if (entry_names.empty())
+            return fail("entry", "Module defines no shader entry points");
+    }
     for (int i = 0; i < module->getDependencyFileCount(); ++i)
         result.dependency_paths.emplace_back(module->getDependencyFilePath(i));
     std::vector<Slang::ComPtr<slang::IEntryPoint>> entries;
     std::vector<slang::IComponentType *> components{module};
-    for (const auto &name : request.entry_points) {
+    for (const auto &name : entry_names) {
         Slang::ComPtr<slang::IEntryPoint> entry;
         if (SLANG_FAILED(module->findEntryPointByName(name.c_str(), entry.writeRef())))
             return fail("entry", "Requested entry point does not exist");
@@ -191,7 +200,7 @@ SourceResult compile_source(const SourceRequest &request) {
         return fail("reflection", "Cannot serialize Slang program reflection");
     result.reflection_json = blob_text(reflection);
     std::vector<StageCode> stages;
-    for (size_t i = 0; i < request.entry_points.size(); ++i) {
+    for (size_t i = 0; i < entry_names.size(); ++i) {
         Slang::ComPtr<ISlangBlob> code;
         messages.setNull();
         status = linked->getEntryPointCode(i, 0, code.writeRef(), messages.writeRef());
@@ -214,7 +223,7 @@ SourceResult compile_source(const SourceRequest &request) {
         default:
             return fail("entry", "Sokol supports vertex, fragment and compute stages");
         }
-        stage.entry_point = request.entry_points[i];
+        stage.entry_point = entry_names[i];
         stage.spirv.resize(code->getBufferSize() / sizeof(uint32_t));
         std::memcpy(stage.spirv.data(), code->getBufferPointer(), code->getBufferSize());
         stages.push_back(std::move(stage));

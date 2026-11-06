@@ -10,7 +10,6 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--slangc", required=True)
     parser.add_argument("--core", required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -26,8 +25,6 @@ def main():
             sys.executable,
             str(root / "tools/sokol-slang"),
             "--source",
-            "--slangc",
-            args.slangc,
             "--core",
             args.core,
             "--targets",
@@ -266,8 +263,6 @@ float4 alternateMain(FragmentInput input) : SV_Target0 {
                 sys.executable,
                 str(root / "tools/sokol-slang"),
                 "--source",
-                "--slangc",
-                args.slangc,
                 "--core",
                 args.core,
                 "--input",

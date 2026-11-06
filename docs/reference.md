@@ -148,8 +148,23 @@ invalid types, and binding collisions are errors.
 See the [compilation command](../README.md#compile). Input may be positional
 or supplied with `--input`; `-o`/`--output` selects the header. `--reflection` and
 `--depfile` are optional. Tools resolve beside the CLI, then on `PATH`; the
-checkout also checks `build/`, `build-all/`, and the pinned Slang package.
-Use `--core` or `--slangc` to override discovery.
+checkout also checks `build/` and `build-all/`. Use `--core` to override discovery.
+The core links Slang's library when `compiler_library` is enabled (the default
+for Slang builds). The frontend does not launch `slangc`.
+
+Each request captures the root source and standard shader/header files below its
+source directory and `-I` directories. Includes resolve only within that capture;
+the compiler never falls back to live files. Use `--capture-source FILE` for
+includes with another filename suffix. The library API accepts arbitrary captured
+file names. Dependency output lists the files Slang actually consumed.
+
+The core's `--source-request request.json -o result.json` route accepts version 1,
+`module_name`, `source_path`, `source`, `entry_points`, optional `files` (path to
+source bytes), `search_paths`, and `profile`. An empty entry list discovers marked
+entry points. Results own stage kinds, names, SPIR-V words, reflection, compiler
+identity, dependency paths and diagnostics. This route and in-process callers use
+the same `compile_source` function. `compile_backend` applies Sokol's shared
+binding rules and returns owned backend code and reflection without C++ headers.
 
 The frontend generates metadata from the shader. Mark entry points with
 `[shader("vertex")]`, `[shader("fragment")]`, or `[shader("compute")]`;

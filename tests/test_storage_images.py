@@ -175,8 +175,6 @@ def main():
                 sys.executable,
                 str(root / "tools/sokol-slang"),
                 "--source",
-                "--slangc",
-                args.slangc,
                 "--core",
                 args.core,
                 "--input",
