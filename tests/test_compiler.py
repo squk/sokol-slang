@@ -1,6 +1,5 @@
 """Exercise compiler failures and dependency tracking with real Slang output."""
 import argparse
-import copy
 import json
 from pathlib import Path
 import subprocess
@@ -15,23 +14,21 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     source = (root / 'tests/shaders/proof.slang').read_text()
-    metadata = json.loads((root / 'tests/shaders/proof.json').read_text())
+    options = ['--module', 'proof']
     with tempfile.TemporaryDirectory(prefix='sokol slang ') as directory:
         work = Path(directory)
         shader = work / 'shader.slang'
-        meta = work / 'shader.json'
         output = work / 'shader.h'
         reflection = work / 'shader.reflection.json'
         depfile = work / 'shader.d'
         command = [sys.executable, str(root / 'tools/sokol-slang'), '--slangc', args.slangc,
-            '--core', args.core, '--targets', 'metal_macos:metal_ios:metal_sim', '--input', str(shader), '--metadata', str(meta),
+            '--core', args.core, '--targets', 'metal_macos:metal_ios:metal_sim', '--input', str(shader),
             '--output', str(output), '--reflection', str(reflection), '--depfile', str(depfile)]
 
-        def run(text, data, error=None, extra_args=()):
+        def run(text, flags, error=None, extra_args=()):
             shader.write_text(text)
-            meta.write_text(json.dumps(data))
             old = output.read_bytes() if output.exists() else None
-            result = subprocess.run(command + list(extra_args), cwd=work, text=True, capture_output=True)
+            result = subprocess.run(command + list(flags) + list(extra_args), cwd=work, text=True, capture_output=True)
             if error:
                 assert result.returncode != 0, 'invalid shader succeeded'
                 assert error in result.stderr, result.stderr
@@ -40,12 +37,11 @@ def main():
                 assert result.returncode == 0, result.stderr
             return result
 
-        run(source, metadata)
+        run(source, options)
         report = json.loads(reflection.read_text())['targets']['metal_macos']
         bindings = {b['name']: b for stage in ('vertex', 'fragment') for b in report[stage]['bindings']}
-        assert bindings['vertex_records']['slot'] == 0
+        assert bindings['vertex_records']['slot'] != bindings['fragment_records']['slot']
         assert bindings['vertex_records']['binding'] == 8
-        assert bindings['fragment_records']['slot'] == 2
         assert bindings['fragment_records']['binding'] == 8
         assert bindings['fragment_tex']['binding'] == 0
         assert report['vertex']['entry'] == 'main0'
@@ -60,44 +56,36 @@ def main():
                 'output.uv = input.position * 0.5 + 0.5;\n'
                 '    output.unusedMiddle = input.position;\n'
                 '    output.unusedTail = input.position;')
-        run(unused_varyings, metadata)
+        run(unused_varyings, options)
         stages = json.loads(reflection.read_text())['targets']['metal_macos']
         assert len(stages['vertex']['spirv']['outputs']) == 4
         assert len(stages['fragment']['spirv']['inputs']) == 2
         # Native texture loads must not expose an unused helper sampler.
         loads = source.replace('tex.Sample(smp, input.uv)', 'tex.Load(int3(0, 0, 0))')
-        load_metadata = copy.deepcopy(metadata)
-        del load_metadata['resources']['smp']
-        load_metadata['resources']['tex']['sample_type'] = 'unfilterable_float'
-        run(loads, load_metadata, extra_args=['--targets', 'metal_macos:wgsl:spirv_vk'])
+        load_options = options + ['--sample-type', 'tex=unfilterable_float']
+        run(loads, load_options, extra_args=['--targets', 'metal_macos:wgsl:spirv_vk'])
         load_report = json.loads(reflection.read_text())
         assert not any(resource['kind'] == 'sampler' for resource in load_report['resources'].values())
         for stages in load_report['targets'].values():
             assert not any(binding['kind'] == 'sampler' for stage in stages.values()
                            for binding in stage['bindings'])
         assert 'desc.samplers[' not in output.read_text()
-        run(source, metadata)
-        broken = copy.deepcopy(metadata)
-        broken['resources']['tex']['slots']['fragment'] = 0
-        run(source, broken, 'duplicate view slot')
-        broken = copy.deepcopy(metadata)
-        broken['resources']['params']['slots']['vertex'] = 8
-        run(source, broken, 'slot must be in')
-        broken = copy.deepcopy(metadata)
-        del broken['resources']['tex']
-        run(source, broken, 'missing or wrong metadata')
-        run(source.replace('float scale;', 'float scale; float2x2 unsupported;'), metadata, 'uniforms support')
+        run(source, options)
+        run(source, options + ['--binding', 'vertex:records=0', '--binding', 'fragment:tex=0'], 'duplicate view slot')
+        run(source, options + ['--binding', 'vertex:params=8'], 'slot must be in')
+        run(source, options + ['--sample-type', 'tex=depth'], 'sample_type does not match')
+        run(source.replace('float scale;', 'float scale; float2x2 unsupported;'), options, 'uniforms support')
         run(source.replace('float2 position : POSITION;', '[[vk::location(16)]] float2 position : POSITION;').replace('uint recordIndex : TEXCOORD0;', '[[vk::location(1)]] uint recordIndex : TEXCOORD0;'),
-            metadata, 'out-of-range stage location')
-        run(source.replace('return tex.Sample', 'syntax_error return tex.Sample'), metadata, 'error')
+            options, 'out-of-range stage location')
+        run(source.replace('return tex.Sample', 'syntax_error return tex.Sample'), options, 'error')
         (work / 'helper.slang').write_text('float proofScale() { return 1.0; }\n')
         imported = 'import helper;\n' + source.replace('input.position * params.scale', 'input.position * params.scale * proofScale()')
-        run(imported, metadata)
+        run(imported, options)
         assert 'helper.slang' in depfile.read_text(), depfile.read_text()
         assert '\\ ' in depfile.read_text(), 'dependency paths with spaces must be escaped'
         first = output.read_bytes()
         (work / 'helper.slang').write_text('float proofScale() { return 0.5; }\n')
-        run(imported, metadata)
+        run(imported, options)
         assert first != output.read_bytes(), 'import edit did not change generated shader'
 
         # Relative textual includes also preserve macros and transitive dependencies.
@@ -105,12 +93,12 @@ def main():
         (work / 'common.slang').write_text('#include "constants.slang"\n')
         included = '#include "common.slang"\n' + source.replace(
             'input.position * params.scale', 'input.position * params.scale * PROOF_SCALE')
-        run(included, metadata)
+        run(included, options)
         assert 'common.slang' in depfile.read_text()
         assert 'constants.slang' in depfile.read_text()
         first = output.read_bytes()
         (work / 'constants.slang').write_text('#define PROOF_SCALE 0.5\n')
-        run(included, metadata)
+        run(included, options)
         assert first != output.read_bytes(), 'include edit did not change generated shader'
 
         # Resolve both includes and imports through repeatable search directories.
@@ -122,25 +110,25 @@ def main():
         (work / 'constants.slang').rename(includes / 'constants.slang')
         (work / 'helper.slang').rename(modules / 'helper.slang')
         combined = 'import helper;\n' + included.replace('PROOF_SCALE', 'PROOF_SCALE * proofScale()')
-        run(combined, metadata, error='common.slang')
+        run(combined, options, error='common.slang')
         search_args = ['-I', includes.name, '--include-dir', str(modules)]
-        run(combined, metadata, extra_args=search_args)
+        run(combined, options, extra_args=search_args)
         dependencies = depfile.read_text()
         for path in (includes / 'common.slang', includes / 'constants.slang', modules / 'helper.slang'):
             escaped = str(path).replace('\\', '\\\\').replace(':', '\\:').replace(' ', '\\ ')
             assert escaped in dependencies, dependencies
         # The joined short form is accepted too; missing dependencies preserve the output.
-        run(combined, metadata, extra_args=['-I' + str(includes), '-I' + str(modules)])
+        run(combined, options, extra_args=['-I' + str(includes), '-I' + str(modules)])
         (includes / 'constants.slang').unlink()
-        run(combined, metadata, error='constants.slang', extra_args=search_args)
+        run(combined, options, error='constants.slang', extra_args=search_args)
 
         compute_source = (root / 'tests/fixtures/compute/shader.slang').read_text()
-        compute_meta = json.loads((root / 'tests/fixtures/compute/metadata.json').read_text())
+        compute_options = ['--module', 'compute']
         target_index = command.index('--targets')
         del command[target_index:target_index + 2]
         emitted = work / 'compute-spirv'
         command += ['--emit-spirv-dir', str(emitted)]
-        run(compute_source, compute_meta)
+        run(compute_source, compute_options)
         targets = json.loads(reflection.read_text())['targets']
         assert set(targets) == {'glsl430', 'glsl310es', 'hlsl5', 'metal_macos', 'metal_ios', 'metal_sim', 'wgsl', 'spirv_vk'}
         assert all(t['compute']['workgroup_size'] == [32, 2, 1] for t in targets.values())
@@ -151,13 +139,26 @@ def main():
             '--depfile', str(reused / 'shader.d')], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert (reused / 'shader.h').read_bytes() == output.read_bytes(), 'reused compute SPIR-V changed header'
-        broken = copy.deepcopy(compute_meta)
-        broken['resources']['resultRecords'].pop('access')
-        run(compute_source, broken, 'access does not match')
-        broken = dict(compute_meta, vertex='vertexMain')
-        run(compute_source, broken, 'choose vertex and fragment entries, or a compute entry')
-        run(compute_source.replace('numthreads(32, 2, 1)', 'numthreads(8, 1, 1)'), compute_meta, 'multiple of 32')
-    print('PASS: raster/compute bindings, invalid metadata, layouts, diagnostics, includes/imports and reusable compute SPIR-V')
+        run(compute_source, compute_options, 'choose vertex and fragment entries, or a compute entry',
+            extra_args=['--vertex', 'vertexMain', '--compute', 'computeMain'])
+        run(compute_source.replace('numthreads(32, 2, 1)', 'numthreads(8, 1, 1)'), compute_options, 'multiple of 32')
+        # No JSON, entry flags, naming flags or policy flags: Slang owns discovery.
+        simple = (root / 'tests/fixtures/portable/shader.slang').read_text()
+        run(simple, [])
+        simple_report = json.loads(reflection.read_text())
+        assert simple_report['resources']['tex']['sample_type'] == 'float'
+        assert simple_report['resources']['smp']['sampler_type'] == 'filtering'
+        assert 'shader_draw_shader_desc' in output.read_text()
+        assert not (work / 'metadata.json').exists()
+        depth_source = (root / 'tests/fixtures/depth/shader.slang').read_text()
+        run(depth_source, [])
+        inferred = json.loads(reflection.read_text())['resources']
+        assert inferred['shadow']['sample_type'] == 'depth'
+        assert inferred['lessSmp']['sampler_type'] == 'comparison'
+        assert inferred['greaterSmp']['sampler_type'] == 'comparison'
+        run(compute_source, [])
+        assert set(json.loads(reflection.read_text())['targets']['metal_macos']) == {'compute'}
+    print('PASS: raster/compute bindings, invalid CLI settings, layouts, diagnostics, includes/imports and reusable compute SPIR-V')
 
 
 if __name__ == '__main__':

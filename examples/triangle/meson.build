@@ -1,11 +1,11 @@
 # examples/triangle/meson.build
 
 triangle_header = custom_target('triangle-shader',
-  input: ['shader.slang', 'metadata.json'],
+  input: 'shader.slang',
   output: ['triangle.h', 'triangle.reflection.json'],
   depfile: 'triangle.d',
   depend_files: files('../../tools/sokol-slang'),
-  command: slang_command)
+  command: slang_command + ['--module', 'triangle'])
 
 triangle_c_args = []
 triangle_deps = [sokol_dep]

@@ -89,14 +89,14 @@ def main():
                 emitted = work / 'spirv' / name
                 run([sys.executable, str(frontend), '--slangc', str(args.slangc),
                      '--core', str(core), '--input', str(example / 'shader.slang'),
-                     '--metadata', str(example / 'metadata.json'),
+                     '--module', name.replace('-', '_'),
                      '--emit-spirv-dir', str(emitted), *outputs(generated)], work)
                 expected = check_output(generated, stages)
                 # Find the installed sibling core and Slang on PATH; write only a header.
                 wrapped = work / 'cli-slang' / name / 'shader.h'
                 tool_env = dict(os.environ, PATH=str(args.slangc.parent) + os.pathsep + os.environ.get('PATH', ''))
                 run([*cli, str(example / 'shader.slang'),
-                     '--metadata', str(example / 'metadata.json'), '-o', str(wrapped)], work, env=tool_env)
+                     '--module', name.replace('-', '_'), '-o', str(wrapped)], work, env=tool_env)
                 assert wrapped.read_bytes() == (generated / 'shader.h').read_bytes()
                 assert list(wrapped.parent.iterdir()) == [wrapped], 'unexpected sidecars'
 

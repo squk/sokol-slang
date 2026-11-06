@@ -15,7 +15,7 @@ python = import('python').find_installation('python3')
 #   slangc = sokol_slang_proj.get_variable('slangc')
 #
 #   shader_header = custom_target('my-shader',
-#     input: ['shader.slang', 'metadata.json'],
+#     input: 'shader.slang',
 #     output: ['shader.h', 'shader.reflection.json'],
 #     depfile: 'shader.d',
 #     command: [
@@ -23,7 +23,7 @@ python = import('python').find_installation('python3')
 #       '--slangc', slangc,
 #       '--core', core,
 #       '--input', '@INPUT0@',
-#       '--metadata', '@INPUT1@',
+#       '--module', 'meson_example',
 #       '--output', '@OUTPUT0@',
 #       '--reflection', '@OUTPUT1@',
 #       '--depfile', '@DEPFILE@'
@@ -37,13 +37,13 @@ sokol_slang = find_program('sokol-slang', required: false)
 
 if sokol_slang.found()
   compiled_shader = custom_target('compiled-shader',
-    input: ['shader.slang', 'metadata.json'],
+    input: 'shader.slang',
     output: ['shader.h', 'shader.reflection.json'],
     depfile: 'shader.d',
     command: [
       sokol_slang,
       '--input', '@INPUT0@',
-      '--metadata', '@INPUT1@',
+      '--module', 'meson_example',
       '--output', '@OUTPUT0@',
       '--reflection', '@OUTPUT1@',
       '--depfile', '@DEPFILE@'

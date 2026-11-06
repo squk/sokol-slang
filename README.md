@@ -3,7 +3,7 @@
 Compile Slang into a Sokol header with backend shaders, buffer structs, and
 binding constants. Applications need only the header and Sokol.
 
-Alpha: APIs and metadata may change. Windows/D3D11 and iOS execution are unverified.
+Alpha: APIs may change. Windows/D3D11 and iOS execution are unverified.
 
 ## Build
 
@@ -19,8 +19,11 @@ meson test -C build --print-errorlogs
 
 ```sh
 python3 tools/sokol-slang examples/triangle/shader.slang \
-  --metadata examples/triangle/metadata.json -o build/triangle.h
+  --module triangle -o build/triangle.h
 ```
+
+A shader alone is enough: `sokol-slang shader.slang` writes `shader.h`.
+Entry points, resource types, and bindings come from reflection.
 
 Tools are discovered automatically; override with `--slangc` or `--core`.
 Use `--targets` to select backends and `-I` for imports/includes.

@@ -29,7 +29,7 @@ slang_frontend = sokol_slang.get_variable('slang_frontend')
 slangc = sokol_slang.get_variable('slangc')
 
 shader_header = custom_target('my-shader',
-  input: ['shader.slang', 'metadata.json'],
+  input: 'shader.slang',
   output: ['shader.h', 'shader.reflection.json'],
   depfile: 'shader.d',
   command: [
@@ -37,7 +37,7 @@ shader_header = custom_target('my-shader',
     '--slangc', slangc,
     '--core', core,
     '--input', '@INPUT0@',
-    '--metadata', '@INPUT1@',
+    '--module', 'meson_example',
     '--output', '@OUTPUT0@',
     '--reflection', '@OUTPUT1@',
     '--depfile', '@DEPFILE@'
@@ -55,13 +55,13 @@ If `sokol-slang` is installed on your system `PATH`:
 sokol_slang = find_program('sokol-slang')
 
 shader_header = custom_target('my-shader',
-  input: ['shader.slang', 'metadata.json'],
+  input: 'shader.slang',
   output: ['shader.h', 'shader.reflection.json'],
   depfile: 'shader.d',
   command: [
     sokol_slang,
     '--input', '@INPUT0@',
-    '--metadata', '@INPUT1@',
+    '--module', 'meson_example',
     '--output', '@OUTPUT0@',
     '--reflection', '@OUTPUT1@',
     '--depfile', '@DEPFILE@'

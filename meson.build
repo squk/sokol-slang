@@ -48,7 +48,7 @@ core_command = [core, '--manifest', '@INPUT0@', '--output', '@OUTPUT0@',
   '--reflection', '@OUTPUT1@', '--depfile', '@DEPFILE@']
 if get_option('slang')
   slang_command = [python, slang_frontend, '--slangc', slangc, '--core', core,
-    '--input', '@INPUT0@', '--metadata', '@INPUT1@', '--output', '@OUTPUT0@',
+    '--input', '@INPUT0@', '--output', '@OUTPUT0@',
     '--reflection', '@OUTPUT1@', '--depfile', '@DEPFILE@']
 endif
 
@@ -107,7 +107,7 @@ if get_option('slang')
   install_data('tools/sokol-slang', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')
 
   proof_header = custom_target('proof-shader',
-    input: ['tests/shaders/proof.slang', 'tests/shaders/proof.json'],
+    input: 'tests/shaders/proof.slang',
     output: ['proof.h', 'proof.reflection.json'],
     depfile: 'proof.d',
     depend_files: files('tools/sokol-slang'),
@@ -122,10 +122,10 @@ if get_option('slang')
 
   test('compiler-contract', python, args: [files('tests/test_compiler.py'), '--slangc', slangc.full_path(), '--core', core.full_path()], depends: core, timeout: 60)
 
-  compute_header = custom_target('compute-shader', input: ['tests/fixtures/compute/shader.slang', 'tests/fixtures/compute/metadata.json'],
+  compute_header = custom_target('compute-shader', input: 'tests/fixtures/compute/shader.slang',
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',
     depend_files: files('tools/sokol-slang'),
-    command: slang_command)
+    command: slang_command + ['--module', 'compute'])
   if host_machine.system() == 'emscripten'
     webgpu_compute = executable('webgpu-compute', test_source, compute_header,
       name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-DTEST_COMPUTE', '-fexceptions', '-DSHADER_HEADER="compute.h"'] + webgpu_args,
@@ -152,10 +152,10 @@ if get_option('slang')
   endif
 
   portable_header = custom_target('portable-shader',
-    input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
+    input: 'tests/fixtures/portable/shader.slang',
     build_by_default: true, output: ['portable.h', 'portable.reflection.json'], depfile: 'portable.d',
     depend_files: files('tools/sokol-slang'),
-    command: slang_command)
+    command: slang_command + ['--module', 'portable'])
   portable_descriptors = executable('portable-descriptors', 'tests/descriptors.cc', portable_header,
     cpp_args: ['-DSHADER_HEADER="portable.h"'], dependencies: sokol_dep)
   test('portable-descriptors', portable_descriptors)
@@ -164,10 +164,10 @@ if get_option('slang')
       cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="portable.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
     test('d3d11-proof', d3d11_proof)
     hlsl4_header = custom_target('portable-hlsl4-shader',
-      input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
+      input: 'tests/fixtures/portable/shader.slang',
       output: ['portable_hlsl4.h', 'portable_hlsl4.reflection.json'], depfile: 'portable_hlsl4.d',
       depend_files: files('tools/sokol-slang'),
-      command: slang_command + ['--targets', 'hlsl4'])
+      command: slang_command + ['--module', 'portable'] + ['--targets', 'hlsl4'])
     d3d11_hlsl4_proof = executable('d3d11-hlsl4-proof', test_source, hlsl4_header,
       cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="portable_hlsl4.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
     test('d3d11-hlsl4-proof', d3d11_hlsl4_proof)
@@ -202,10 +202,10 @@ if get_option('slang')
       if target[2].found()
         name = 'portable_' + target[0]
         header = custom_target(name + '-shader',
-          input: ['tests/fixtures/portable/shader.slang', 'tests/fixtures/portable/metadata.json'],
+          input: 'tests/fixtures/portable/shader.slang',
           output: [name + '.h', name + '.json'], depfile: name + '.d',
           depend_files: files('tools/sokol-slang'),
-          command: slang_command + ['--targets', target[0]])
+          command: slang_command + ['--module', 'portable'] + ['--targets', target[0]])
         proof = executable(target[1], test_source, header,
           cpp_args: ['-DSHADER_HEADER="' + name + '.h"'] + (target[3] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
           dependencies: [sokol_dep, egl_dep, target[2]] + app_deps)
@@ -391,10 +391,10 @@ endif
 
 storage_image_headers = []
 if get_option('slang')
-  storage_image_header = custom_target('storage-image-shader', input: ['tests/fixtures/storage-image/shader.slang', 'tests/fixtures/storage-image/metadata.json'],
+  storage_image_header = custom_target('storage-image-shader', input: 'tests/fixtures/storage-image/shader.slang',
     output: ['storage_image.h', 'storage_image.reflection.json'], depfile: 'storage_image.d',
     depend_files: files('tools/sokol-slang'),
-    command: slang_command)
+    command: slang_command + ['--module', 'storage_image'])
   storage_image_headers += [['', 'storage_image.h', storage_image_header]]
 endif
 if glslang.found()
@@ -453,10 +453,10 @@ endforeach
 
 depth_headers = []
 if get_option('slang')
-  depth_header = custom_target('depth-shader', input: ['tests/fixtures/depth/shader.slang', 'tests/fixtures/depth/metadata.json'],
+  depth_header = custom_target('depth-shader', input: 'tests/fixtures/depth/shader.slang',
     output: ['depth.h', 'depth.reflection.json'], depfile: 'depth.d',
     depend_files: files('tools/sokol-slang'),
-    command: slang_command)
+    command: slang_command + ['--module', 'depth'])
   depth_headers += [['', 'depth.h', depth_header]]
 endif
 if glslang.found()
@@ -476,10 +476,10 @@ endif
 varyings_headers = []
 if get_option('slang')
   varyings_header = custom_target('varyings-shader',
-    input: ['tests/shaders/varyings.slang', 'tests/shaders/varyings.json'],
+    input: 'tests/shaders/varyings.slang',
     output: ['varyings.h', 'varyings.reflection.json'], depfile: 'varyings.d',
     depend_files: files('tools/sokol-slang'),
-    command: slang_command)
+    command: slang_command + ['--module', 'portable'])
   varyings_headers += [['', 'varyings.h', varyings_header]]
 endif
 if glslang.found()

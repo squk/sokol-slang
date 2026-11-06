@@ -119,22 +119,24 @@ or supplied with `--input`; `-o`/`--output` selects the header. `--reflection` a
 checkout also checks `build/`, `build-all/`, and the pinned Slang package.
 Use `--core` or `--slangc` to override discovery.
 
-Metadata names entry points and resources, with a `slots` map for stage bindings:
+The frontend generates metadata from the shader. Mark entry points with
+`[shader("vertex")]`, `[shader("fragment")]`, or `[shader("compute")]`;
+select ambiguous entries with `--vertex`, `--fragment`, or `--compute`.
+The output defaults to the input path with a `.h` suffix.
 
-- Textures require `sample_type`; samplers require `sampler_type`. Types must
-  match SPIR-V. Integer/unfilterable textures require nonfiltering samplers;
-  use texel loads for portable integer textures.
-- Compute uses a `compute` entry and slots. Storage images require `format` and
-  explicit `access` (`write` or `read_write`); metadata cannot change shader access.
-- Generated resource aliases have stage prefixes: `vertex_`, `fragment_`, `compute_`.
+Resource kinds, access, storage formats and sampling types come from SPIR-V.
+Use `--sample-type NAME=TYPE` and `--sampler-type NAME=TYPE` for policies that
+depend on runtime image formats. Slots are allocated across stages; reserve a
+slot with `--binding STAGE:NAME=SLOT`. Generated aliases have stage prefixes:
+`vertex_`, `fragment_`, and `compute_`.
 
 Compilation uses SPIR-V 1.3, column-major matrices, and GL buffer layout.
 Repeatable `-I path`/`--include-dir path` resolves from the working directory;
 depfiles include transitive includes/imports. Failed compilation preserves the
 previous header.
 
-For automatic slot allocation and multiple programs per source, see
-[automatic bindings and program sets](frontend_programs.md).
+For naming, policy overrides and multiple programs per source, see
+[shader inputs and program sets](frontend_programs.md).
 
 `--emit-spirv-dir path` exports stage binaries and `manifest.json` for reuse with
 the core, without Slang.

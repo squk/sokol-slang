@@ -1,9 +1,0 @@
-{
-  "module": "depth", "program": "draw",
-  "vertex": "vertexMain", "fragment": "fragmentMain",
-  "resources": {
-    "shadow": {"kind": "texture", "slots": {"fragment": 9}, "sample_type": "depth"},
-    "lessSmp": {"kind": "sampler", "slots": {"fragment": 4}, "sampler_type": "comparison"},
-    "greaterSmp": {"kind": "sampler", "slots": {"fragment": 10}, "sampler_type": "comparison"}
-  }
-}

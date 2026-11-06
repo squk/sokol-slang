@@ -37,7 +37,7 @@ def main():
             else:
                 assert result.returncode == 0, result.stderr
 
-        def verify():
+        def verify(auto_slots=False):
             targets = json.loads(report.read_text())['targets']
             assert len(targets) == 8
             for target, stages in targets.items():
@@ -45,7 +45,11 @@ def main():
                 bindings = {b['name']: b for b in stages['compute']['bindings']}
                 for name, slot, access, fmt in [('colors', 5, 'write', 'rgba8'), ('counters', 9, 'read_write', 'r32ui')]:
                     image = bindings['compute_' + name]
-                    assert (image['kind'], image['slot'], image['access'], image['format']) == ('storage_image', slot, access, fmt)
+                    assert (image['kind'], image['access'], image['format']) == ('storage_image', access, fmt)
+                    if not auto_slots:
+                        assert image['slot'] == slot
+                view_slots = [b['slot'] for b in bindings.values() if b['kind'] != 'uniform']
+                assert len(set(view_slots)) == len(view_slots)
                 # Images and writable buffers share UAV registers, but GL image units
                 # and Metal texture indices have separate namespaces from buffers.
                 names = ('colors', 'resultRecords', 'counters') if target == 'hlsl5' else ('colors', 'counters')
@@ -108,22 +112,11 @@ def main():
         binary.write_bytes(spirv)
 
         if args.slangc:
-            metadata = work / 'slang.json'
-            authored = json.loads((root / 'tests/fixtures/storage-image/metadata.json').read_text())
-            metadata.write_text(json.dumps(authored))
             frontend = [sys.executable, str(root / 'tools/sokol-slang'), '--slangc', args.slangc, '--core', args.core,
-                '--input', str(root / 'tests/fixtures/storage-image/shader.slang'), '--metadata', str(metadata),
+                '--input', str(root / 'tests/fixtures/storage-image/shader.slang'), '--module', 'storage_image',
                 '--output', str(header), '--reflection', str(report), '--depfile', str(work / 'shader.d')]
             run(frontend)
-            verify()
-            for field, value, error in [('access', 'read_write', 'access does not match'), ('format', 'r32ui', 'format does not match')]:
-                data = copy.deepcopy(authored)
-                data['resources']['colors'][field] = value
-                metadata.write_text(json.dumps(data))
-                old = header.read_bytes()
-                result = subprocess.run(frontend, capture_output=True, text=True)
-                assert result.returncode != 0 and error in result.stderr, result.stderr
-                assert header.read_bytes() == old
+            verify(auto_slots=True)
     print('PASS: storage-image formats/access, eight targets, mixed UAV bindings, stripped names and diagnostics')
 
 

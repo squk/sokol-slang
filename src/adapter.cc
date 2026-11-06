@@ -567,9 +567,19 @@ static SpirvcrossSource translate(const Input& input, int index, const char* pat
     return result;
 }
 
+// Reads texture and sampler use from SPIR-V so frontend callers need only
+// supply policies, such as float filterability, that shader code cannot state.
+class ResourceInspector : public Compiler {
+public:
+    using Compiler::Compiler;
+    void inspect_sampling() { analyze_image_and_sampler_usage(); }
+    bool uses_comparison(uint32_t id) const { return comparison_ids.count(id) != 0; }
+};
+
 static Json inspect_spirv(const std::string& path) {
     auto words = read_spirv(path.c_str());
-    Compiler compiler(words);
+    ResourceInspector compiler(words);
+    compiler.inspect_sampling();
     Json output = {{"entries", Json::array()}, {"resources", Json::array()}};
     for (const auto& entry : compiler.get_entry_points_and_stages())
         output["entries"].push_back({{"name", entry.name}, {"stage", entry.execution_model == spv::ExecutionModelVertex ? "vertex" : entry.execution_model == spv::ExecutionModelFragment ? "fragment" : entry.execution_model == spv::ExecutionModelGLCompute ? "compute" : "unsupported"}});
@@ -579,6 +589,14 @@ static Json inspect_spirv(const std::string& path) {
             Json binding = {{"name", compiler.get_name(resource.id)},
                 {"set", compiler.get_decoration(resource.id, spv::DecorationDescriptorSet)},
                 {"binding", compiler.get_decoration(resource.id, spv::DecorationBinding)}, {"kind", kind}};
+            if (std::string(kind) == "texture") {
+                const auto& image = compiler.get_type(resource.type_id).image;
+                const auto scalar = compiler.get_type(image.type).basetype;
+                binding["sample_type"] = image.depth || compiler.uses_comparison(resource.id) ? "depth"
+                    : scalar == SPIRType::Int ? "sint" : scalar == SPIRType::UInt ? "uint" : "float";
+            }
+            if (std::string(kind) == "sampler")
+                binding["sampler_type"] = compiler.uses_comparison(resource.id) ? "comparison" : "filtering";
             if (std::string(kind) == "storage_buffer") binding["access"] =
                 compiler.get_buffer_block_flags(resource.id).get(spv::DecorationNonWritable) ? "read" : "read_write";
             if (std::string(kind) == "storage_image") {
