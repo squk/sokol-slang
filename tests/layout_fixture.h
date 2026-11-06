@@ -31,10 +31,12 @@ struct LayoutFixture {
     void draw() {
         const auto* descriptor = proof_draw_shader_desc(sg_query_backend());
         require(descriptor != nullptr, "generated Metal platform descriptor missing");
-        require(descriptor->uniform_blocks[0].msl_buffer_n == 0, "wrong vertex uniform binding");
-        require(descriptor->uniform_blocks[1].msl_buffer_n == 1, "wrong fragment uniform binding");
-        require(descriptor->views[0].storage_buffer.msl_buffer_n == 8, "wrong vertex storage binding");
-        require(descriptor->views[2].storage_buffer.msl_buffer_n == 8, "wrong fragment storage binding");
+        // Metal uniform bindings follow the generated Sokol slots; their order
+        // is not fixed to vertex before fragment.
+        require(descriptor->uniform_blocks[UB_proof_vertex_params].msl_buffer_n == UB_proof_vertex_params, "wrong vertex uniform binding");
+        require(descriptor->uniform_blocks[UB_proof_fragment_params].msl_buffer_n == UB_proof_fragment_params, "wrong fragment uniform binding");
+        require(descriptor->views[VIEW_proof_vertex_records].storage_buffer.msl_buffer_n == 8, "wrong vertex storage binding");
+        require(descriptor->views[VIEW_proof_fragment_records].storage_buffer.msl_buffer_n == 8, "wrong fragment storage binding");
         sg_shader shader = sg_make_shader(descriptor);
         require(sg_query_shader_state(shader) == SG_RESOURCESTATE_VALID, "native Metal shader creation failed");
         Vertex vertices[] = {{{99,99},0}, {{-.4f,-.4f},1}, {{.4f,-.4f},1},

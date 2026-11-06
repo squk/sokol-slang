@@ -61,7 +61,10 @@ def main():
         assert len(stages['vertex']['spirv']['outputs']) == 4
         assert len(stages['fragment']['spirv']['inputs']) == 2
         # Native texture loads must not expose an unused helper sampler.
-        loads = source.replace('tex.Sample(smp, input.uv)', 'tex.Load(int3(0, 0, 0))')
+        # Keep this check independent of the layout fixture's BaseInstance
+        # builtin, which the pinned WGSL reader does not support.
+        loads = (root / 'tests/fixtures/portable/shader.slang').read_text().replace(
+            'tex.Sample(smp, input.uv)', 'tex.Load(int3(0, 0, 0))')
         load_options = options + ['--sample-type', 'tex=unfilterable_float']
         run(loads, load_options, extra_args=['--targets', 'metal_macos:wgsl:spirv_vk'])
         load_report = json.loads(reflection.read_text())

@@ -1,4 +1,4 @@
-# Set the SDK before Meson checks Objective-C++. host_machine is not available
+# Set the SDK before Meson checks compilers. host_machine is not available
 # until project() runs, so Python identifies the build OS here. Cross builds
 # keep their toolchain SDK; explicit Meson compiler options override these defaults.
 project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.1',
@@ -7,8 +7,8 @@ project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.1',
     and not meson.is_cross_build() ? [
       'c_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
       'c_link_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
-      'objcpp_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
-      'objcpp_link_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
+      'cpp_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
+      'cpp_link_args=-isysroot "' + run_command('xcrun', '--sdk', 'macosx', '--show-sdk-path', check: true).stdout().strip() + '"',
     ] : []
   ),
 )
@@ -52,9 +52,8 @@ if get_option('slang')
     '--reflection', '@OUTPUT1@', '--depfile', '@DEPFILE@']
 endif
 
-test_source = host_machine.system() == 'darwin' ? 'tests/test_app.mm' : 'tests/test_app.cc'
+test_source = 'tests/test_app.cc'
 if host_machine.system() == 'darwin'
-  add_languages('objcpp', native: false)
   app_frameworks = macos_host ? ['Cocoa', 'QuartzCore'] : ['Foundation', 'UIKit', 'QuartzCore', 'CoreGraphics']
 endif
 
@@ -115,7 +114,7 @@ if get_option('slang')
   )
   if host_machine.system() == 'darwin'
     proof = executable('metal-proof', test_source, proof_header,
-      objcpp_args: ['-DSOKOL_METAL', '-DTEST_LAYOUT'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_LAYOUT'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
     test('metal-proof', proof)
   endif
@@ -136,7 +135,7 @@ if get_option('slang')
   endif
   if host_machine.system() == 'darwin'
     metal_compute = executable('metal-compute', test_source, compute_header,
-      objcpp_args: ['-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="compute.h"'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="compute.h"'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
     test('metal-compute', metal_compute)
   endif
@@ -193,7 +192,7 @@ if get_option('slang')
   endif
   if macos_host
     gl_proof = executable('gl-proof', test_source, portable_header,
-      objcpp_args: ['-DSOKOL_GLCORE', '-DSHADER_HEADER="portable.h"'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE', '-DSHADER_HEADER="portable.h"'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
     test('gl-proof', gl_proof)
   endif
@@ -238,7 +237,7 @@ if glslang.found()
   endif
   if host_machine.system() == 'darwin'
     generic_metal_compute = executable('generic-metal-compute', test_source, generic_compute_header,
-      objcpp_args: ['-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="generic_compute.h"'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="generic_compute.h"'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
     test('generic-metal-compute', generic_metal_compute)
   endif
@@ -298,7 +297,7 @@ if glslang.found()
   endif
   if macos_host
     generic_gl_proof = executable('generic-gl-proof', test_source, generic_header,
-      objcpp_args: ['-DSOKOL_GLCORE', '-DSHADER_HEADER="generic.h"'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE', '-DSHADER_HEADER="generic.h"'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
     test('generic-gl-proof', generic_gl_proof)
   endif
@@ -413,7 +412,7 @@ endif
 foreach fixture : storage_image_headers
   if host_machine.system() == 'darwin'
     proof = executable(fixture[0] + 'metal-storage-image', test_source, fixture[2],
-      objcpp_args: ['-DSOKOL_METAL', '-DTEST_STORAGE_IMAGE', '-DSHADER_HEADER="' + fixture[1] + '"'],
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_STORAGE_IMAGE', '-DSHADER_HEADER="' + fixture[1] + '"'],
       dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
     test(fixture[0] + 'metal-storage-image', proof)
   elif host_machine.system() == 'linux' and app_available
@@ -505,12 +504,12 @@ foreach group : [['depth', depth_headers], ['varyings', varyings_headers]]
     endif
     if host_machine.system() == 'darwin'
       name = fixture[0] + 'metal' + suffix
-      proof = executable(name, test_source, fixture[2], objcpp_args: ['-DSOKOL_METAL'] + fixture_args,
+      proof = executable(name, test_source, fixture[2], cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL'] + fixture_args,
         dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
       test(name, proof)
       if macos_host
         name = fixture[0] + 'gl' + suffix
-        proof = executable(name, test_source, fixture[2], objcpp_args: ['-DSOKOL_GLCORE'] + fixture_args,
+        proof = executable(name, test_source, fixture[2], cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE'] + fixture_args,
           dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
         test(name, proof)
       endif
