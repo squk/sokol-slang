@@ -1,11 +1,90 @@
 #include "slang_compile.h"
+#include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <set>
 #include <slang-com-ptr.h>
 #include <slang.h>
 
 namespace sokol_slang {
 namespace {
+bool same_guid(const SlangUUID &a, const SlangUUID &b) {
+    return std::memcmp(&a, &b, sizeof(a)) == 0;
+}
+
+// Slang retains blobs and its filesystem through COM references. Neither
+// object borrows the request, so backend work cannot outlive its source bytes.
+class SourceBlob final : public ISlangBlob {
+  public:
+    explicit SourceBlob(std::string bytes) : bytes_(std::move(bytes)) {}
+    SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID &id,
+                                                          void **out) override {
+        *out = nullptr;
+        if (!same_guid(id, ISlangUnknown::getTypeGuid()) &&
+            !same_guid(id, ISlangBlob::getTypeGuid()))
+            return SLANG_E_NO_INTERFACE;
+        *out = static_cast<ISlangBlob *>(this);
+        addRef();
+        return SLANG_OK;
+    }
+    SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override { return ++references_; }
+    SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
+        const auto remaining = references_.fetch_sub(1) - 1;
+        if (!remaining)
+            delete this;
+        return remaining;
+    }
+    SLANG_NO_THROW const void *SLANG_MCALL getBufferPointer() override { return bytes_.c_str(); }
+    SLANG_NO_THROW size_t SLANG_MCALL getBufferSize() override { return bytes_.size(); }
+
+  private:
+    std::atomic<uint32_t> references_{1};
+    std::string bytes_;
+};
+
+std::string source_path(const std::string &path) {
+    return std::filesystem::path(path).lexically_normal().generic_string();
+}
+
+class SourceFiles final : public ISlangFileSystem {
+  public:
+    explicit SourceFiles(std::map<std::string, std::string> files) : files_(std::move(files)) {}
+    SLANG_NO_THROW void *SLANG_MCALL castAs(const SlangUUID &id) override {
+        if (same_guid(id, ISlangUnknown::getTypeGuid()) ||
+            same_guid(id, ISlangCastable::getTypeGuid()) ||
+            same_guid(id, ISlangFileSystem::getTypeGuid()))
+            return static_cast<ISlangFileSystem *>(this);
+        return nullptr;
+    }
+    SLANG_NO_THROW SlangResult SLANG_MCALL queryInterface(const SlangUUID &id,
+                                                          void **out) override {
+        *out = castAs(id);
+        if (!*out)
+            return SLANG_E_NO_INTERFACE;
+        addRef();
+        return SLANG_OK;
+    }
+    SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override { return ++references_; }
+    SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
+        const auto remaining = references_.fetch_sub(1) - 1;
+        if (!remaining)
+            delete this;
+        return remaining;
+    }
+    SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char *path, ISlangBlob **out) override {
+        *out = nullptr;
+        const auto found = files_.find(source_path(path));
+        if (found == files_.end())
+            return SLANG_E_NOT_FOUND;
+        *out = new SourceBlob(found->second);
+        return SLANG_OK;
+    }
+
+  private:
+    std::atomic<uint32_t> references_{1};
+    const std::map<std::string, std::string> files_;
+};
+
 std::string blob_text(ISlangBlob *blob) {
     if (!blob || !blob->getBufferSize())
         return {};
@@ -32,6 +111,18 @@ SourceResult compile_source(const SourceRequest &request) {
         if (name.empty() || !names.insert(name).second)
             return fail("input", "Entry point names must be nonempty and unique");
 
+    std::map<std::string, std::string> captured;
+    for (const auto &[path, bytes] : request.files) {
+        if (path.empty() || path.find('\0') != std::string::npos ||
+            !captured.emplace(source_path(path), bytes).second)
+            return fail("input",
+                        "Captured source paths must be nonempty and unique after normalization");
+    }
+    if (request.source_path.empty() || request.source_path.find('\0') != std::string::npos ||
+        !captured.emplace(source_path(request.source_path), request.source).second)
+        return fail("input", "The root source needs a unique nonempty path");
+    Slang::ComPtr<SourceFiles> files;
+    files.attach(new SourceFiles(std::move(captured)));
     Slang::ComPtr<slang::IGlobalSession> global;
     if (SLANG_FAILED(slang::createGlobalSession(global.writeRef())))
         return fail("session", "Cannot create Slang global session");
@@ -44,7 +135,18 @@ SourceResult compile_source(const SourceRequest &request) {
     std::vector<const char *> paths;
     for (const auto &path : request.search_paths)
         paths.push_back(path.c_str());
+    // Match the CLI's addressing and matrix contract before Sokol translation.
+    slang::CompilerOptionEntry options[3] = {};
+    options[0].name = slang::CompilerOptionName::VulkanUseEntryPointName;
+    options[1].name = slang::CompilerOptionName::VulkanUseGLLayout;
+    options[2].name = slang::CompilerOptionName::DebugInformation;
+    for (auto &option : options)
+        option.value.intValue0 = 1;
     slang::SessionDesc desc;
+    desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
+    desc.compilerOptionEntries = options;
+    desc.compilerOptionEntryCount = 3;
+    desc.fileSystem = files.get();
     desc.targets = &target;
     desc.targetCount = 1;
     desc.searchPaths = paths.data();

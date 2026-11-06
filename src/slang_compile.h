@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,8 +13,11 @@ struct SourceRequest {
     std::string source_path;
     std::string source;
     std::vector<std::string> entry_points;
+    // Search paths address this captured file map, never the host filesystem.
+    // The caller keeps the request unchanged until compile_source returns.
+    std::map<std::string, std::string> files;
     std::vector<std::string> search_paths;
-    std::string profile = "spirv_1_0";
+    std::string profile = "spirv_1_3";
 };
 
 struct StageCode {
