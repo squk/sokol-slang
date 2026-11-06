@@ -28,7 +28,7 @@ core = executable('sokol-spirv', 'src/sokol_spirv.cc', 'src/manifest.cc', 'src/p
 # Export build-machine tools to consumers without adding rendering fixtures.
 # The compiler reads Sokol declarations; it must not link the parent's runtime.
 slang_frontend = files('tools/sokol-slang')
-if meson.is_subproject() or get_option('slang')
+if get_option('slang')
   if get_option('slangc') != ''
     slangc = find_program(get_option('slangc'), native: true)
   else
@@ -108,6 +108,9 @@ if host_machine.system() == 'emscripten'
   webgpu_args = ['--use-port=emdawnwebgpu']
 endif
 
+compute_fixtures = []
+portable_fixtures = []
+
 if get_option('slang')
   install_data('tools/sokol-slang', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')
 
@@ -131,30 +134,7 @@ if get_option('slang')
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',
     depend_files: files('tools/sokol-slang'),
     command: slang_command + ['--module', 'compute'])
-  if host_machine.system() == 'emscripten'
-    webgpu_compute = executable('webgpu-compute', test_source, compute_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-DTEST_COMPUTE', '-fexceptions', '-DSHADER_HEADER="compute.h"'] + webgpu_args,
-      link_args: browser_link_args + webgpu_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('webgpu-compute', node, args: [files('tests/browser/run.mjs'), browser.full_path(), webgpu_compute.full_path()],
-      depends: webgpu_compute, timeout: 90, suite: 'browser')
-  endif
-  if host_machine.system() == 'darwin'
-    metal_compute = executable('metal-compute', test_source, compute_header,
-      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="compute.h"'],
-      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
-    test('metal-compute', metal_compute)
-  endif
-  if host_machine.system() == 'linux' and app_available and egl_dep.found()
-    foreach target : [['gl-compute', gl_dep, false], ['gles-compute', gles_dep, true]]
-      if target[1].found()
-        proof = executable(target[0], test_source, compute_header,
-          cpp_args: ['-DTEST_COMPUTE', '-DSHADER_HEADER="compute.h"'] + (target[2] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
-          dependencies: [sokol_dep, egl_dep, target[1]] + app_deps)
-        test(target[0], proof)
-      endif
-    endforeach
-  endif
+  compute_fixtures += [['', 'compute.h', compute_header]]
 
   portable_header = custom_target('portable-shader',
     input: 'tests/fixtures/portable/shader.slang',
@@ -164,63 +144,11 @@ if get_option('slang')
   portable_descriptors = executable('portable-descriptors', 'tests/descriptors.cc', portable_header,
     cpp_args: ['-DSHADER_HEADER="portable.h"'] + native_bytecode_args, dependencies: sokol_dep)
   test('portable-descriptors', portable_descriptors)
-  if host_machine.system() == 'windows'
-    d3d11_proof = executable('d3d11-proof', test_source, portable_header,
-      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="portable.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
-    test('d3d11-proof', d3d11_proof)
-    hlsl4_header = custom_target('portable-hlsl4-shader',
-      input: 'tests/fixtures/portable/shader.slang',
-      output: ['portable_hlsl4.h', 'portable_hlsl4.reflection.json'], depfile: 'portable_hlsl4.d',
-      depend_files: files('tools/sokol-slang'),
-      command: slang_command + ['--module', 'portable'] + ['--targets', 'hlsl4'])
-    d3d11_hlsl4_proof = executable('d3d11-hlsl4-proof', test_source, hlsl4_header,
-      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="portable_hlsl4.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
-    test('d3d11-hlsl4-proof', d3d11_hlsl4_proof)
-    foreach entry : [['hlsl-compile', 'portable.h', portable_header], ['hlsl4-compile', 'portable_hlsl4.h', hlsl4_header]]
-      hlsl_compile = executable(entry[0], 'tests/hlsl_compile.cc', entry[2],
-        cpp_args: ['-DSHADER_HEADER="' + entry[1] + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
-      test(entry[0], hlsl_compile)
-    endforeach
-  endif
-  if host_machine.system() == 'emscripten'
-    webgl_proof = executable('webgl-proof', test_source, portable_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_GLES3', '-fexceptions', '-DSHADER_HEADER="portable.h"'],
-      link_args: webgl_link_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('webgl-proof', node, args: [files('tests/browser/run.mjs'), browser.full_path(), webgl_proof.full_path()],
-      depends: webgl_proof, timeout: 90, suite: 'browser')
-    webgpu_proof = executable('webgpu-proof', test_source, portable_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-fexceptions', '-DSHADER_HEADER="portable.h"'] + webgpu_args,
-      link_args: browser_link_args + webgpu_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('webgpu-proof', node, args: [files('tests/browser/run.mjs'), browser.full_path(), webgpu_proof.full_path()],
-      depends: webgpu_proof, timeout: 90, suite: 'browser')
-  endif
-  if macos_host
-    gl_proof = executable('gl-proof', test_source, portable_header,
-      cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE', '-DSHADER_HEADER="portable.h"'],
-      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
-    test('gl-proof', gl_proof)
-  endif
-  if host_machine.system() == 'linux' and app_available and egl_dep.found()
-    foreach target : linux_gl_targets
-      if target[2].found()
-        name = 'portable_' + target[0]
-        header = custom_target(name + '-shader',
-          input: 'tests/fixtures/portable/shader.slang',
-          output: [name + '.h', name + '.json'], depfile: name + '.d',
-          depend_files: files('tools/sokol-slang'),
-          command: slang_command + ['--module', 'portable'] + ['--targets', target[0]])
-        proof = executable(target[1], test_source, header,
-          cpp_args: ['-DSHADER_HEADER="' + name + '.h"'] + (target[3] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
-          dependencies: [sokol_dep, egl_dep, target[2]] + app_deps)
-        test(target[1], proof)
-      endif
-    endforeach
-  endif
+  portable_fixtures += [['', 'portable', portable_header,
+    files('tests/fixtures/portable/shader.slang'), slang_command + ['--module', 'portable'],
+    files('tools/sokol-slang')]]
 
-  subdir('examples/triangle')
-  subdir('examples/textured-quad')
+  subdir('examples')
 
 endif
 
@@ -233,30 +161,7 @@ if glslang.found()
   generic_compute_header = custom_target('generic-compute-shader', input: [generic_compute_manifest, generic_compute_spirv],
     output: ['generic_compute.h', 'generic_compute.reflection.json'], depfile: 'generic_compute.d',
     command: core_command)
-  if host_machine.system() == 'emscripten'
-    generic_webgpu_compute = executable('generic-webgpu-compute', test_source, generic_compute_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-DTEST_COMPUTE', '-fexceptions', '-DSHADER_HEADER="generic_compute.h"'] + webgpu_args,
-      link_args: browser_link_args + webgpu_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('generic-webgpu-compute', node, args: [files('tests/browser/run.mjs'), browser.full_path(), generic_webgpu_compute.full_path()],
-      depends: generic_webgpu_compute, timeout: 90, suite: 'browser')
-  endif
-  if host_machine.system() == 'darwin'
-    generic_metal_compute = executable('generic-metal-compute', test_source, generic_compute_header,
-      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL', '-DTEST_COMPUTE', '-DSHADER_HEADER="generic_compute.h"'],
-      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
-    test('generic-metal-compute', generic_metal_compute)
-  endif
-  if host_machine.system() == 'linux' and app_available and egl_dep.found()
-    foreach target : [['generic-gl-compute', gl_dep, false], ['generic-gles-compute', gles_dep, true]]
-      if target[1].found()
-        proof = executable(target[0], test_source, generic_compute_header,
-          cpp_args: ['-DTEST_COMPUTE', '-DSHADER_HEADER="generic_compute.h"'] + (target[2] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
-          dependencies: [sokol_dep, egl_dep, target[1]] + app_deps)
-        test(target[0], proof)
-      endif
-    endforeach
-  endif
+  compute_fixtures += [['generic-', 'generic_compute.h', generic_compute_header]]
   test('compute-contract', python, args: [files('tests/test_compute.py'), '--core', core.full_path(),
     '--glslang', glslang.full_path()], depends: core, timeout: 120)
   generic_vertex = custom_target('generic-vertex', input: 'tests/fixtures/portable/glsl/vertex.vert',
@@ -274,7 +179,7 @@ if glslang.found()
   endif
   generic_descriptors = executable('generic-descriptors', 'tests/descriptors.cc', generic_header,
     cpp_args: ['-DSHADER_HEADER="generic.h"'] + native_bytecode_args, dependencies: sokol_dep)
-  test('generic-descriptors', generic_descriptors)
+  test('generic-descriptors', generic_descriptors, suite: 'core-smoke')
   program_set_manifest = configure_file(input: 'tests/fixtures/program_set.json', output: 'program_set.json', copy: true)
   program_set_header = custom_target('program-set-shader',
     input: [program_set_manifest, generic_vertex, generic_fragment, generic_compute_spirv],
@@ -286,57 +191,8 @@ if glslang.found()
   test('program-set-contract', python, args: [files('tests/test_program_sets.py'),
     '--core', core.full_path(), '--manifest', program_set_manifest],
     depends: [core, generic_vertex, generic_fragment, generic_compute_spirv], timeout: 120)
-  if host_machine.system() == 'windows'
-    generic_d3d11_proof = executable('generic-d3d11-proof', test_source, generic_header,
-      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="generic.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
-    test('generic-d3d11-proof', generic_d3d11_proof)
-    generic_hlsl4_header = custom_target('generic-hlsl4-shader',
-      input: [generic_manifest, generic_vertex, generic_fragment],
-      output: ['generic_hlsl4.h', 'generic_hlsl4.reflection.json'], depfile: 'generic_hlsl4.d',
-      command: core_command + ['--targets', 'hlsl4'])
-    generic_d3d11_hlsl4_proof = executable('generic-d3d11-hlsl4-proof', test_source, generic_hlsl4_header,
-      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="generic_hlsl4.h"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
-    test('generic-d3d11-hlsl4-proof', generic_d3d11_hlsl4_proof)
-    foreach entry : [['generic-hlsl-compile', 'generic.h', generic_header], ['generic-hlsl4-compile', 'generic_hlsl4.h', generic_hlsl4_header]]
-      hlsl_compile = executable(entry[0], 'tests/hlsl_compile.cc', entry[2],
-        cpp_args: ['-DSHADER_HEADER="' + entry[1] + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
-      test(entry[0], hlsl_compile)
-    endforeach
-  endif
-  if host_machine.system() == 'emscripten'
-    generic_webgl_proof = executable('generic-webgl-proof', test_source, generic_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_GLES3', '-fexceptions', '-DSHADER_HEADER="generic.h"'],
-      link_args: webgl_link_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('generic-webgl-proof', node, args: [files('tests/browser/run.mjs'), browser.full_path(), generic_webgl_proof.full_path()],
-      depends: generic_webgl_proof, timeout: 90, suite: 'browser')
-    generic_webgpu_proof = executable('generic-webgpu-proof', test_source, generic_header,
-      name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-fexceptions', '-DSHADER_HEADER="generic.h"'] + webgpu_args,
-      link_args: browser_link_args + webgpu_args, dependencies: sokol_dep,
-      link_depends: files('tests/browser/shell.html'))
-    test('generic-webgpu-proof', node, args: [files('tests/browser/run.mjs'), browser.full_path(), generic_webgpu_proof.full_path()],
-      depends: generic_webgpu_proof, timeout: 90, suite: 'browser')
-  endif
-  if macos_host
-    generic_gl_proof = executable('generic-gl-proof', test_source, generic_header,
-      cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE', '-DSHADER_HEADER="generic.h"'],
-      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
-    test('generic-gl-proof', generic_gl_proof)
-  endif
-  if host_machine.system() == 'linux' and app_available and egl_dep.found()
-    foreach target : linux_gl_targets
-      if target[2].found()
-        name = 'generic_' + target[0]
-        header = custom_target(name + '-shader', input: [generic_manifest, generic_vertex, generic_fragment],
-          output: [name + '.h', name + '.json'], depfile: name + '.d',
-          command: core_command + ['--targets', target[0]])
-        proof = executable('generic-' + target[1], test_source, header,
-          cpp_args: ['-DSHADER_HEADER="' + name + '.h"'] + (target[3] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
-          dependencies: [sokol_dep, egl_dep, target[2]] + app_deps)
-        test('generic-' + target[1], proof)
-      endif
-    endforeach
-  endif
+  portable_fixtures += [['generic-', 'generic', generic_header,
+    [generic_manifest, generic_vertex, generic_fragment], core_command, []]]
   test('core-contract', python, args: [files('tests/test_core.py'), '--core', core.full_path(),
     '--glslang', glslang.full_path()], depends: core, timeout: 120)
   test('texture-type-contract', python, args: [files('tests/test_texture_types.py'), '--core', core.full_path(),
@@ -344,6 +200,113 @@ if glslang.found()
 else
   warning('glslangValidator not found: independent GLSL fixtures and core-contract tests are disabled')
 endif
+
+# Slang and GLSL fixtures share the same backend application and pixel oracle.
+foreach fixture : compute_fixtures
+  prefix = fixture[0]
+  header_name = fixture[1]
+  header = fixture[2]
+  fixture_args = ['-DTEST_COMPUTE', '-DSHADER_HEADER="' + header_name + '"']
+  core_suite = prefix == 'generic-' ? ['core-smoke'] : []
+  if host_machine.system() == 'darwin'
+    name = prefix + 'metal-compute'
+    proof = executable(name, test_source, header,
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_METAL'] + fixture_args,
+      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['Metal'])])
+    test(name, proof, suite: core_suite)
+  elif host_machine.system() == 'windows'
+    name = prefix + 'd3d11-compute'
+    proof = executable(name, test_source, header,
+      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN'] + fixture_args,
+      dependencies: [sokol_dep, d3d11_dep] + app_deps)
+    test(name, proof, suite: core_suite)
+    name = prefix + 'hlsl-compute-compile'
+    compiler = executable(name, 'tests/hlsl_compute_compile.cc', header,
+      cpp_args: ['-DSHADER_HEADER="' + header_name + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
+    test(name, compiler)
+  elif host_machine.system() == 'emscripten'
+    name = prefix + 'webgpu-compute'
+    proof = executable(name, test_source, header,
+      name_suffix: 'html', cpp_args: ['-DSOKOL_WGPU', '-fexceptions'] + fixture_args + webgpu_args,
+      link_args: browser_link_args + webgpu_args, dependencies: sokol_dep,
+      link_depends: files('tests/browser/shell.html'))
+    test(name, node, args: [files('tests/browser/run.mjs'), browser.full_path(), proof.full_path()],
+      depends: proof, timeout: 90, suite: 'browser')
+  elif host_machine.system() == 'linux' and app_available and egl_dep.found()
+    foreach target : [['gl', gl_dep, false], ['gles', gles_dep, true]]
+      if target[1].found()
+        name = prefix + target[0] + '-compute'
+        proof = executable(name, test_source, header,
+          cpp_args: fixture_args + (target[2] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
+          dependencies: [sokol_dep, egl_dep, target[1]] + app_deps)
+        test(name, proof, suite: core_suite)
+      endif
+    endforeach
+  endif
+endforeach
+
+foreach fixture : portable_fixtures
+  prefix = fixture[0]
+  base = fixture[1]
+  header = fixture[2]
+  fixture_args = ['-DSHADER_HEADER="' + base + '.h"']
+  core_suite = prefix == 'generic-' ? ['core-smoke'] : []
+  if host_machine.system() == 'windows'
+    name = prefix + 'd3d11-proof'
+    proof = executable(name, test_source, header,
+      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN'] + fixture_args,
+      dependencies: [sokol_dep, d3d11_dep] + app_deps)
+    test(name, proof, suite: core_suite)
+    hlsl4_header = custom_target(base + '-hlsl4-shader',
+      input: fixture[3], depend_files: fixture[5],
+      output: [base + '_hlsl4.h', base + '_hlsl4.reflection.json'], depfile: base + '_hlsl4.d',
+      command: fixture[4] + ['--targets', 'hlsl4'])
+    name = prefix + 'd3d11-hlsl4-proof'
+    proof = executable(name, test_source, hlsl4_header,
+      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DSHADER_HEADER="' + base + '_hlsl4.h"'],
+      dependencies: [sokol_dep, d3d11_dep] + app_deps)
+    test(name, proof)
+    foreach entry : [['hlsl-compile', base + '.h', header], ['hlsl4-compile', base + '_hlsl4.h', hlsl4_header]]
+      name = prefix + entry[0]
+      compiler = executable(name, 'tests/hlsl_compile.cc', entry[2],
+        cpp_args: ['-DSHADER_HEADER="' + entry[1] + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
+      test(name, compiler)
+    endforeach
+  elif macos_host
+    name = prefix + 'gl-proof'
+    proof = executable(name, test_source, header,
+      cpp_args: ['-x', 'objective-c++', '-DSOKOL_GLCORE'] + fixture_args,
+      dependencies: [sokol_dep, dependency('appleframeworks', modules: app_frameworks + ['OpenGL'])])
+    test(name, proof, suite: core_suite)
+  elif host_machine.system() == 'emscripten'
+    foreach target : [
+      ['webgl', ['-DSOKOL_GLES3', '-fexceptions'], webgl_link_args],
+      ['webgpu', ['-DSOKOL_WGPU'] + webgpu_args, browser_link_args + webgpu_args],
+    ]
+      name = prefix + target[0] + '-proof'
+      proof = executable(name, test_source, header,
+        name_suffix: 'html', cpp_args: target[1] + fixture_args,
+        link_args: target[2], dependencies: sokol_dep,
+        link_depends: files('tests/browser/shell.html'))
+      test(name, node, args: [files('tests/browser/run.mjs'), browser.full_path(), proof.full_path()],
+        depends: proof, timeout: 90, suite: 'browser')
+    endforeach
+  elif host_machine.system() == 'linux' and app_available and egl_dep.found()
+    foreach target : linux_gl_targets
+      if target[2].found()
+        shader_name = base + '_' + target[0]
+        shader = custom_target(shader_name + '-shader', input: fixture[3], depend_files: fixture[5],
+          output: [shader_name + '.h', shader_name + '.json'], depfile: shader_name + '.d',
+          command: fixture[4] + ['--targets', target[0]])
+        name = prefix + target[1]
+        proof = executable(name, test_source, shader,
+          cpp_args: ['-DSHADER_HEADER="' + shader_name + '.h"'] + (target[3] ? ['-DSOKOL_GLES3'] : ['-DSOKOL_GLCORE']),
+          dependencies: [sokol_dep, egl_dep, target[2]] + app_deps)
+        test(name, proof, suite: target[0] in ['glsl410', 'glsl300es'] ? core_suite : [])
+      endif
+    endforeach
+  endif
+endforeach
 
 # Exercise the actual install rules without writing to the configured prefix.
 # Cross builds must validate their host packages on the corresponding machine.
@@ -358,7 +321,7 @@ if not meson.is_cross_build() and (get_option('slang') or glslang.found())
     install_args += ['--glslang', glslang.full_path()]
   endif
   test('installed-tools', python, args: install_args, depends: core,
-    suite: 'install', is_parallel: false, timeout: 120)
+    suite: ['install', 'core-smoke'], is_parallel: false, timeout: 120)
 endif
 
 if host_machine.system() == 'linux'
@@ -388,28 +351,11 @@ if host_machine.system() == 'linux'
     foreach fixture : vulkan_fixtures
       proof = executable(fixture[0], test_source, fixture[3], vulkan_readback_shader,
         cpp_args: fixture[1] + ['-DSHADER_HEADER="' + fixture[2] + '"'], dependencies: [sokol_dep, vulkan_dep] + app_deps)
-      test(fixture[0], proof)
+      test(fixture[0], proof, suite: fixture[0].startswith('generic-') ? ['core-smoke'] : [])
     endforeach
   endif
 endif
 
-if host_machine.system() == 'windows'
-  compute_fixtures = []
-  if get_option('slang')
-    compute_fixtures += [['', 'compute.h', compute_header]]
-  endif
-  if glslang.found()
-    compute_fixtures += [['generic-', 'generic_compute.h', generic_compute_header]]
-  endif
-  foreach fixture : compute_fixtures
-    proof = executable(fixture[0] + 'd3d11-compute', test_source, fixture[2],
-      cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN', '-DTEST_COMPUTE', '-DSHADER_HEADER="' + fixture[1] + '"'], dependencies: [sokol_dep, d3d11_dep] + app_deps)
-    test(fixture[0] + 'd3d11-compute', proof)
-    compiler = executable(fixture[0] + 'hlsl-compute-compile', 'tests/hlsl_compute_compile.cc', fixture[2],
-      cpp_args: ['-DSHADER_HEADER="' + fixture[1] + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
-    test(fixture[0] + 'hlsl-compute-compile', compiler)
-  endforeach
-endif
 
 storage_image_headers = []
 if get_option('slang')

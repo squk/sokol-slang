@@ -3,6 +3,7 @@
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
 #include "sokol_log.h"
+
 #include "readback.h"
 #include <atomic>
 #include <cstdlib>
@@ -17,7 +18,15 @@ static StorageImageFixture fixture;
 #include "layout_fixture.h"
 static LayoutFixture fixture;
 #else
-#include "raster_fixture.h"
+#if defined(TEST_DEPTH)
+#include "depth_fixture.h"
+using RasterFixture = DepthFixture;
+static constexpr float raster_depths[] = {.25f, .75f};
+#else
+#include "portable_fixture.h"
+using RasterFixture = PortableFixture;
+static constexpr float raster_depths[] = {.5f, .2f};
+#endif
 static RasterFixture fixture;
 static size_t draw_index;
 #endif
@@ -26,32 +35,38 @@ static bool pending, done, finishing;
 static int result;
 static std::atomic<int> validation_errors;
 
-static void fail_test(const char* message) {
+static void fail_test(const char *message) {
     std::fprintf(stderr, "FAIL: %s\n", message);
     result = 1;
     done = true;
 }
 
-static void log_message(const char* tag, uint32_t level, uint32_t item, const char* message,
-                        uint32_t line, const char* file, void* user) {
-    if (level <= 1) ++validation_errors;
+static void log_message(const char *tag, uint32_t level, uint32_t item, const char *message,
+                        uint32_t line, const char *file, void *user) {
+    if (level <= 1)
+        ++validation_errors;
     slog_func(tag, level, item, message, line, file, user);
 }
 
 static void cleanup() {
-    if (!done) fail_test("application closed before checks finished");
-    if (sg_isvalid()) sg_shutdown();
+    if (!done)
+        fail_test("application closed before checks finished");
+    if (sg_isvalid())
+        sg_shutdown();
     cleanup_readbacks();
 #if defined(__EMSCRIPTEN__)
     EM_ASM({ Module['reportTestResult']($0); }, result);
 #else
-    if (result) std::exit(result);
+    if (result)
+        std::exit(result);
 #endif
 }
 
 static void finish() {
-    if (validation_errors) fail_test("Sokol or backend validation errors");
-    if (!result) std::puts("PASS: Sokol shader execution and GPU readback");
+    if (validation_errors)
+        fail_test("Sokol or backend validation errors");
+    if (!result)
+        std::puts("PASS: Sokol shader execution and GPU readback");
     sapp_quit();
 }
 
@@ -60,7 +75,8 @@ static void finish_validation() {
 #if defined(SOKOL_WGPU)
     WGPUPopErrorScopeCallbackInfo callback = {};
     callback.mode = WGPUCallbackMode_AllowSpontaneous;
-    callback.callback = [](WGPUPopErrorScopeStatus status, WGPUErrorType type, WGPUStringView message, void*, void*) {
+    callback.callback = [](WGPUPopErrorScopeStatus status, WGPUErrorType type,
+                           WGPUStringView message, void *, void *) {
         if (status != WGPUPopErrorScopeStatus_Success || type != WGPUErrorType_NoError)
             fail_test(("WebGPU validation: " + readback_message(message)).c_str());
         finish();
@@ -88,7 +104,9 @@ static void init() {
 #elif !defined(TEST_LAYOUT)
         fixture.init(readback_target(fixture.width, fixture.height));
 #endif
-    } catch (const std::exception& error) { fail_test(error.what()); }
+    } catch (const std::exception &error) {
+        fail_test(error.what());
+    }
 }
 
 static void submit_frame() {
@@ -100,35 +118,49 @@ static void submit_frame() {
 }
 
 static void frame() {
-    if (finishing) return;
-    if (done) { if (!result) submit_frame(); finish_validation(); return; }
-    if (pending) { submit_frame(); return; }
+    if (finishing)
+        return;
+    if (done) {
+        if (!result)
+            submit_frame();
+        finish_validation();
+        return;
+    }
+    if (pending) {
+        submit_frame();
+        return;
+    }
     pending = true;
     try {
 #if defined(TEST_COMPUTE)
         fixture.dispatch();
         submit_frame();
-        read_buffer(fixture.result, fixture.count * sizeof(ComputeRecord), [](const uint8_t* bytes, size_t) {
-            fixture.check(reinterpret_cast<const ComputeRecord*>(bytes));
-            done = true;
-        });
+        read_buffer(fixture.result, fixture.count * sizeof(ComputeRecord),
+                    [](const uint8_t *bytes, size_t) {
+                        fixture.check(reinterpret_cast<const ComputeRecord *>(bytes));
+                        done = true;
+                    });
 #elif defined(TEST_STORAGE_IMAGE)
         fixture.dispatch();
         submit_frame();
-        read_buffer(fixture.result, (fixture.count + fixture.guards) * sizeof(StorageImageRecord), [](const uint8_t* bytes, size_t) {
-            fixture.check_records(reinterpret_cast<const StorageImageRecord*>(bytes));
-            read_image(fixture.colors, fixture.width, fixture.height, SG_PIXELFORMAT_RGBA8, [](const uint8_t* pixels, size_t row_bytes) {
-                fixture.check_colors(pixels, row_bytes);
-                done = true;
-            });
-        });
+        read_buffer(fixture.result, (fixture.count + fixture.guards) * sizeof(StorageImageRecord),
+                    [](const uint8_t *bytes, size_t) {
+                        fixture.check_records(reinterpret_cast<const StorageImageRecord *>(bytes));
+                        read_image(fixture.colors, fixture.width, fixture.height,
+                                   SG_PIXELFORMAT_RGBA8,
+                                   [](const uint8_t *pixels, size_t row_bytes) {
+                                       fixture.check_colors(pixels, row_bytes);
+                                       done = true;
+                                   });
+                    });
 #elif defined(TEST_LAYOUT)
         fixture.draw();
         submit_frame();
-        read_image(fixture.color, fixture.width, fixture.height, SG_PIXELFORMAT_RGBA32F, [](const uint8_t* bytes, size_t) {
-            fixture.check(reinterpret_cast<const float*>(bytes));
-            done = true;
-        });
+        read_image(fixture.color, fixture.width, fixture.height, SG_PIXELFORMAT_RGBA32F,
+                   [](const uint8_t *bytes, size_t) {
+                       fixture.check(reinterpret_cast<const float *>(bytes));
+                       done = true;
+                   });
 #else
         const float depth = raster_depths[draw_index];
         fixture.begin_draw(depth);
@@ -140,19 +172,23 @@ static void frame() {
         sg_end_pass();
         submit_frame();
         const auto image = sg_query_view_desc(fixture.color_view).color_attachment.image;
-        read_image(image, fixture.width, fixture.height, SG_PIXELFORMAT_RGBA8, [depth, depths = std::move(depths)](const uint8_t* pixels, size_t) {
-            fixture.check_color(pixels, depth, readback_top_left());
+        read_image(image, fixture.width, fixture.height, SG_PIXELFORMAT_RGBA8,
+                   [depth, depths = std::move(depths)](const uint8_t *pixels, size_t) {
+                       fixture.check_color(pixels, depth, readback_top_left());
 #if !defined(TEST_DEPTH)
-            if (!depths.empty()) fixture.check_depth(depths.data(), depth);
+                       if (!depths.empty())
+                           fixture.check_depth(depths.data(), depth);
 #endif
-            done = ++draw_index == sizeof(raster_depths) / sizeof(raster_depths[0]);
-            pending = false;
-        });
+                       done = ++draw_index == sizeof(raster_depths) / sizeof(raster_depths[0]);
+                       pending = false;
+                   });
 #endif
-    } catch (const std::exception& error) { fail_test(error.what()); }
+    } catch (const std::exception &error) {
+        fail_test(error.what());
+    }
 }
 
-sapp_desc sokol_main(int, char**) {
+sapp_desc sokol_main(int, char **) {
     sapp_desc app = {};
     app.init_cb = init;
     app.frame_cb = frame;

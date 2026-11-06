@@ -49,8 +49,8 @@ jobs:
       - name: Compile core-only build
         run: meson compile -C build-core
 
-      - name: Run core-only test suite
-        run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a meson test -C build-core --print-errorlogs
+      - name: Check core-only build and install isolation
+        run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a meson test -C build-core --suite core-smoke --no-rebuild --print-errorlogs
 
       - name: Cross-compile MinGW-w64 Windows fixtures
         run: |
@@ -87,8 +87,8 @@ jobs:
       - name: Compile core-only build
         run: meson compile -C build-core
 
-      - name: Run core-only test suite
-        run: meson test -C build-core --print-errorlogs
+      - name: Check core-only build and install isolation
+        run: meson test -C build-core --suite core-smoke --no-rebuild --print-errorlogs
 
       - name: Cross-compile iOS Simulator fixtures
         run: |
@@ -134,8 +134,8 @@ jobs:
       - name: Compile core-only build
         run: meson compile -C build-core
 
-      - name: Run core-only test suite
-        run: meson test -C build-core --no-rebuild --print-errorlogs
+      - name: Check core-only build and install isolation
+        run: meson test -C build-core --suite core-smoke --no-rebuild --print-errorlogs
 
   browser:
     name: Browser (Emscripten / WebGL2 & WebGPU via Docker)

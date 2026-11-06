@@ -26,8 +26,7 @@ static_assert(MaxUniformBlocks == SG_MAX_UNIFORMBLOCK_BINDSLOTS);
 static_assert(MaxViews == SG_MAX_VIEW_BINDSLOTS);
 static_assert(MaxSamplers == SG_MAX_SAMPLER_BINDSLOTS);
 
-// Sokol's generators use these lookups even when a caller supplies translated
-// source directly. No Slang or native compiler runs inside this process.
+// Reuse Sokol's reflection and C generator without its shader frontend.
 namespace shdc {
 bool Spirvcross::can_flatten_uniform_block(const Compiler &compiler, const Resource &resource) {
     const auto &block = compiler.get_type(resource.base_type_id);
@@ -235,16 +234,16 @@ static std::vector<uint32_t> normalize_entry(std::vector<uint32_t> words,
     return output;
 }
 
-static std::map<std::string, std::string> uniform_paths;
 // Sokol's C fields stay flat when a buffer contains a one-member array wrapper.
 // GL lookup names must retain the real member path in the emitted shader.
 class SokolGenerator : public gen::SokolCGenerator {
   public:
-    std::string output_name;
+    std::map<std::string, std::string> uniform_paths;
+    std::string take_header() { return std::move(content); }
     std::string internal_program_prefix, public_program_prefix;
 
   private:
-    ErrMsg end(const gen::GenInput &input) override {
+    ErrMsg end(const gen::GenInput &) override {
         if (!internal_program_prefix.empty()) {
             size_t position = 0;
             while ((position = content.find(internal_program_prefix, position)) !=
@@ -262,11 +261,7 @@ class SokolGenerator : public gen::SokolCGenerator {
                 start += to.size();
             }
         }
-        const auto temporary_name = std::filesystem::path(input.args.output).filename().string();
-        const auto position = content.find("before " + temporary_name);
-        if (position != std::string::npos)
-            content.replace(position + 7, temporary_name.size(), output_name);
-        return gen::Generator::end(input);
+        return {};
     }
 };
 
@@ -282,10 +277,11 @@ static uint32_t prepare_glsl(CompilerGLSL &compiler) {
     return dummy_sampler;
 }
 
-static SpirvcrossSource translate(const Input &input, int index, const char *path,
+static SpirvcrossSource translate(const Input &input, int index, std::vector<uint32_t> words,
                                   const std::map<std::string, Binding> &metadata,
                                   std::set<std::string> &used, Json &report, Slang::Enum target,
-                                  Bytecode &bytecode, const std::string &entry) {
+                                  Bytecode &bytecode,
+                                  std::map<std::string, std::string> &uniform_paths) {
     const auto shader_stage = ShaderStage::from_snippet_type(input.snippets[index].type);
     const auto stage_name = ShaderStage::to_str(shader_stage);
     const bool compute = shader_stage == ShaderStage::Compute;
@@ -294,7 +290,6 @@ static SpirvcrossSource translate(const Input &input, int index, const char *pat
         throw std::runtime_error(
             std::string(Slang::to_str(target)) +
             ": compute requires glsl430, glsl310es, hlsl5, Metal, WGSL or Vulkan");
-    auto words = normalize_entry(read_spirv(path), entry);
     CompilerGLSL analysis(words);
     name_resources(analysis, stage_name, metadata);
     const auto expected_stage = compute                               ? spv::ExecutionModelGLCompute
@@ -757,10 +752,16 @@ static Json inspect_spirv(const std::string &path) {
     return output;
 }
 
-static Json generate_program(Manifest manifest, const std::map<std::string, std::string> &options,
-                             const std::filesystem::path &header, const std::string &output_name,
-                             bool batch) {
-    uniform_paths.clear();
+struct GeneratedProgram {
+    std::string header;
+    Json report;
+};
+
+static GeneratedProgram generate_program(const Manifest &manifest,
+                                         const std::map<std::string, std::string> &options,
+                                         const std::filesystem::path &native_work,
+                                         const std::string &output_name, bool batch) {
+    SokolGenerator generator;
     Input input;
     input.base_path = manifest.path.string();
     const std::string module = manifest.document["module"];
@@ -786,9 +787,8 @@ static Json generate_program(Manifest manifest, const std::map<std::string, std:
         else
             input.fs_map[name] = i;
     }
-    std::string program = manifest.document["program"];
-    input.programs[program] =
-        compute ? Program::from_cs(program, "cs", 0) : Program::from_vs_fs(program, "vs", "fs", 0);
+    input.programs[program_name] = compute ? Program::from_cs(program_name, "cs", 0)
+                                           : Program::from_vs_fs(program_name, "vs", "fs", 0);
     for (const auto &resource : manifest.document["resources"]) {
         const std::string name = resource["name"];
         if (resource["kind"] == "texture")
@@ -800,8 +800,7 @@ static Json generate_program(Manifest manifest, const std::map<std::string, std:
     }
     Args args;
     args.input = input.base_path;
-    args.output = header.string();
-    const auto native_work = header.string() + ".native";
+    args.output = output_name;
     std::vector<Slang::Enum> targets;
     const bool modern_gl =
         compute ||
@@ -847,15 +846,17 @@ static Json generate_program(Manifest manifest, const std::map<std::string, std:
     std::array<Bytecode, Slang::Num> bytecode;
     std::set<std::string> used;
     Json report = {{"version", 1}, {"targets", Json::object()}};
+    std::vector<std::vector<uint32_t>> binaries;
+    for (const auto &stage : stages)
+        binaries.push_back(normalize_entry(read_spirv(manifest.stage_path(stage).string().c_str()),
+                                           manifest.document["stages"][stage]["entry"]));
     for (auto target : targets) {
         auto &sources = translated[target].sources;
         for (int i = 0; i < int(stages.size()); ++i) {
             const auto &stage = stages[i];
             Json stage_json;
-            auto path = manifest.stage_path(stage).string();
-            sources.push_back(translate(input, i, path.c_str(), manifest.bindings, used, stage_json,
-                                        target, bytecode[target],
-                                        manifest.document["stages"][stage]["entry"]));
+            sources.push_back(translate(input, i, binaries[i], manifest.bindings, used, stage_json,
+                                        target, bytecode[target], generator.uniform_paths));
             report["targets"][Slang::to_str(target)][stage] = std::move(stage_json);
         }
         // Upstream Sokol checks location names. Also check types here.
@@ -882,18 +883,15 @@ static Json generate_program(Manifest manifest, const std::map<std::string, std:
     auto reflection = refl::Reflection::build(args, input, translated);
     check(reflection.error);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
-    SokolGenerator generator;
-    generator.output_name = output_name;
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
         generator.public_program_prefix = module + "_" + program_name + "_";
     }
     check(generator.generate(generation));
-    return report;
+    return {generator.take_header(), std::move(report)};
 }
 
 int main(int argc, char **argv) {
-    std::filesystem::path temporary_header;
     std::filesystem::path native_work;
     try {
         std::map<std::string, std::string> options;
@@ -1029,7 +1027,6 @@ int main(int argc, char **argv) {
                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
                       ".tmp";
         std::filesystem::create_directory(native_work);
-        temporary_header = native_work / output_path.filename();
         Json programs = batch ? document.at("programs") : Json::array({document});
         Json reports = Json::object();
         std::set<std::string> names;
@@ -1055,18 +1052,14 @@ int main(int argc, char **argv) {
             auto manifest = Manifest::from_document(program, manifest_path);
             for (const auto &[stage, entry] : program.at("stages").items())
                 dependencies.insert(manifest.stage_path(stage));
-            const auto header = native_work / (name + ".h");
-            Json report =
-                generate_program(manifest, options, header, output_path.filename().string(), batch);
+            auto generated = generate_program(manifest, options, native_work / name,
+                                              output_path.filename().string(), batch);
             if (!resources.is_null())
-                report["resources"] = resources;
-            reports[name] = std::move(report);
-            std::ifstream stream(header, std::ios::binary);
-            if (!stream)
-                throw std::runtime_error("cannot read generated header");
+                generated.report["resources"] = resources;
+            reports[name] = std::move(generated.report);
             if (!combined.empty())
                 combined += '\n';
-            combined.append(std::istreambuf_iterator<char>(stream), {});
+            combined += generated.header;
         }
         for (const auto &binding : document.value("bindings", Json::array())) {
             const auto key = std::make_pair(binding.at("stage").get<std::string>(),
@@ -1075,17 +1068,10 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("binding override names no reflected resource: " +
                                          key.first + ":" + key.second);
         }
-        std::ofstream header_file(temporary_header, std::ios::binary);
-        header_file << combined;
-        header_file.close();
-        if (!header_file)
-            throw std::runtime_error("cannot write generated header");
-        const auto reflection_path = native_work / "reflection.json";
-        std::ofstream reflection_file(reflection_path);
-        reflection_file << (batch ? reports : reports.begin().value()).dump(2) << '\n';
-        reflection_file.close();
-        if (!reflection_file)
-            throw std::runtime_error("cannot write reflection");
+        std::vector<std::pair<std::filesystem::path, std::string>> outputs;
+        if (options.count("--reflection"))
+            outputs.emplace_back(options.at("--reflection"),
+                                 (batch ? reports : reports.begin().value()).dump(2) + '\n');
         auto escape = [](const std::string &path) {
             std::string result;
             for (char c : path) {
@@ -1097,23 +1083,26 @@ int main(int argc, char **argv) {
             }
             return result;
         };
-        const auto depfile_path = native_work / "shader.d";
-        std::ofstream depfile(depfile_path);
-        depfile << escape(options.at("--output")) << ":";
-        for (const auto &dependency : dependencies)
-            depfile << ' ' << escape(dependency.string());
-        depfile << '\n';
-        depfile.close();
-        if (!depfile)
-            throw std::runtime_error("cannot write dependency file");
-        if (options.count("--reflection"))
-            std::filesystem::copy_file(reflection_path, options.at("--reflection"),
+        if (options.count("--depfile")) {
+            std::ostringstream depfile;
+            depfile << escape(options.at("--output")) << ":";
+            for (const auto &dependency : dependencies)
+                depfile << ' ' << escape(dependency.string());
+            depfile << '\n';
+            outputs.emplace_back(options.at("--depfile"), depfile.str());
+        }
+        outputs.emplace_back(output_path, std::move(combined));
+        // Stage all requested files before publishing. Publish the header last.
+        for (size_t i = 0; i < outputs.size(); ++i) {
+            std::ofstream stream(native_work / std::to_string(i), std::ios::binary);
+            stream << outputs[i].second;
+            stream.close();
+            if (!stream)
+                throw std::runtime_error("cannot write output: " + outputs[i].first.string());
+        }
+        for (size_t i = 0; i < outputs.size(); ++i)
+            std::filesystem::copy_file(native_work / std::to_string(i), outputs[i].first,
                                        std::filesystem::copy_options::overwrite_existing);
-        if (options.count("--depfile"))
-            std::filesystem::copy_file(depfile_path, options.at("--depfile"),
-                                       std::filesystem::copy_options::overwrite_existing);
-        std::filesystem::copy_file(temporary_header, output_path,
-                                   std::filesystem::copy_options::overwrite_existing);
         std::filesystem::remove_all(native_work);
         return 0;
     } catch (const std::exception &error) {

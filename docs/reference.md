@@ -55,6 +55,11 @@ Chromium runs without its sandbox inside the container.
 Windows cross-builds do not execute D3D11 tests. Metal/iOS and native Windows
 execution require their respective hosts.
 
+CI and Docker run the full suite once, then use `--suite core-smoke` for the
+core-only build. That suite checks installed-tool isolation, descriptors, and
+representative raster/compute execution. Omit the suite filter to run all tests
+in a core-only build.
+
 ## Meson consumers
 
 `subproject('sokol-slang')` exports `core` (the native compiler target),

@@ -16,14 +16,6 @@ select_programs = frontend["select_programs"]
 compile_programs = frontend["compile_programs"]
 
 
-def resource(name, kind, binding=0, **fields):
-    if kind == "texture":
-        fields.setdefault("sample_type", "float")
-    if kind == "sampler":
-        fields.setdefault("sampler_type", "filtering")
-    return dict(name=name, kind=kind, set=0, binding=binding, **fields)
-
-
 class CliTest(unittest.TestCase):
     def test_shader_only_defaults_and_discovered_entries(self):
         args = parse_args(["triangle.slang"])
@@ -150,15 +142,14 @@ class FrontendTest(unittest.TestCase):
                 if "programs" in manifest
                 else report
             )
-            Path(args[args.index("--reflection") + 1]).write_text(json.dumps(reports))
+            if "--reflection" in args:
+                Path(args[args.index("--reflection") + 1]).write_text(json.dumps(reports))
 
     def inspect(self, args, **kwargs):
         if "-version" in args:
             return "2026.20\n"
-        stage = Path(args[-1]).read_text()
-        if stage == "discovery":
-            return json.dumps(dict(entries=self.entries))
-        return json.dumps(dict(entries=[dict(name="main", stage=stage)]))
+        self.assertEqual(Path(args[-1]).read_text(), "discovery", "unexpected stage inspection")
+        return json.dumps(dict(entries=self.entries))
 
     def compile(self):
         with (

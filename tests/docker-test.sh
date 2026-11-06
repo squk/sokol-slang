@@ -17,7 +17,8 @@ check() {
 
 linux() {
     check build-docker-linux
-    check build-docker-core -Dslang=false
+    build build-docker-core -Dslang=false
+    xvfb-run -a meson test -C build-docker-core --suite core-smoke --no-rebuild --print-errorlogs
 }
 
 browser() {

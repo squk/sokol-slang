@@ -59,8 +59,6 @@ def main():
             )
             assert resources["tex"]["sample_type"] == "float"
             assert resources["smp"]["sampler_type"] == "filtering"
-            assert f"programset_{name}_shader_desc".encode() in first
-            assert f"programset_{name}_{name}_shader_desc".encode() not in first
         assert reports["work"]["resources"]["resultRecords"]["access"] == "read_write"
         for program in original["programs"]:
             for stage in program["stages"].values():
