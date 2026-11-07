@@ -1082,6 +1082,70 @@ Json ProgramArtifact::to_json() const {
     return result;
 }
 
+// Preserve compiler source identity separately from backend binding names.
+// Locations join attributes after remapping; descriptors join resource aliases.
+static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
+                         const std::map<std::string, Json> &inspections) {
+    std::map<int, std::string> attribute_names;
+    bool first = true;
+    for (const auto &[target, stages] : artifact.reflection.at("targets").items()) {
+        if (!stages.contains("vertex"))
+            continue;
+        std::map<int, std::string> names;
+        for (const auto &input : stages.at("vertex").at("spirv").value("inputs", Json::array())) {
+            const std::string name = input.at("name");
+            if (name.empty() || !names.emplace(input.at("location").get<int>(), name).second)
+                throw std::runtime_error("Invalid source attribute identity for " + target);
+        }
+        if (!first && names != attribute_names)
+            throw std::runtime_error("Source attributes disagree across backend targets");
+        attribute_names = std::move(names);
+        first = false;
+    }
+    for (auto &attribute : artifact.layout.at("attributes")) {
+        const auto found = attribute_names.find(attribute.at("slot").get<int>());
+        if (found == attribute_names.end())
+            throw std::runtime_error("Native attribute has no source identity");
+        attribute["source_name"] = found->second;
+    }
+    if (attribute_names.size() != artifact.layout.at("attributes").size())
+        throw std::runtime_error("Native and source attribute locations disagree");
+    const std::pair<const char *, const char *> lists[] = {{"uniform_blocks", "uniform"},
+                                                           {"textures", "texture"},
+                                                           {"samplers", "sampler"},
+                                                           {"storage_buffers", "storage_buffer"},
+                                                           {"storage_images", "storage_image"}};
+    for (const auto &[list, kind] : lists)
+        for (auto &resource : artifact.layout.at(list)) {
+            const std::map<std::string, std::string> stage_names = {
+                {"SG_SHADERSTAGE_VERTEX", "vertex"},
+                {"SG_SHADERSTAGE_FRAGMENT", "fragment"},
+                {"SG_SHADERSTAGE_COMPUTE", "compute"}};
+            const std::string stage = stage_names.at(resource.at("stage").get<std::string>());
+            const int slot = resource.at("slot");
+            const Binding *binding = nullptr;
+            for (const auto &[alias, candidate] : manifest.bindings)
+                if (candidate.stage == stage && candidate.kind == kind && candidate.slot == slot) {
+                    if (binding)
+                        throw std::runtime_error("Ambiguous native resource identity");
+                    binding = &candidate;
+                }
+            if (!binding)
+                throw std::runtime_error("Native resource has no descriptor identity");
+            std::string name;
+            for (const auto &source : inspections.at(stage + ".spv").at("resources"))
+                if (source.at("kind") == kind && source.at("set") == binding->set &&
+                    source.at("binding") == binding->binding) {
+                    if (!name.empty())
+                        throw std::runtime_error("Ambiguous source descriptor identity");
+                    name = source.at("name").get<std::string>();
+                }
+            if (name.empty())
+                throw std::runtime_error("Native resource has no source name");
+            resource["source_name"] = std::move(name);
+        }
+}
+
 ProgramArtifact compile_backend(const BackendRequest &request) {
     if (request.stages.empty())
         throw std::runtime_error("No SPIR-V stages supplied");
@@ -1121,6 +1185,7 @@ ProgramArtifact compile_backend(const BackendRequest &request) {
         options["--targets"] = request.targets;
     ProgramArtifact result;
     generate_program(manifest, options, {}, "", false, &request.stages, &result);
+    source_names(result, manifest, inspections);
     if (!resources.is_null())
         result.reflection["resources"] = resources;
     return result;

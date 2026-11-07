@@ -181,9 +181,15 @@ success. The caller owns job scheduling, caching and GPU preparation.
 `ProgramArtifact::layout` exports merged attributes, uniform blocks and members,
 texture/sampler pairs, storage resources, fragment outputs and compute workgroup
 sizes. It uses the C-header generator's enum mappings and includes native binding
-indices and uniform flattening. `to_json()` writes format version 1 with the
-layout, reflection, stage source/bytecode, entries and native profiles. The CLI
-reflection report exposes the same layout. GPU creation and pipeline readiness
+indices and uniform flattening. `ProgramArtifact::to_json()` writes format version
+2 with the layout, reflection, stage source/bytecode, entries and native profiles.
+Artifact attributes, uniform blocks, textures, samplers and storage resources
+require `source_name` for source lookup; `name` keeps the backend binding name.
+Attribute source names join raw SPIR-V reflection by remapped location; resource
+source names join original stage descriptors by set and binding. Names must agree
+across backend targets. Fragment outputs and texture/sampler pairs keep their
+existing native names. The CLI reflection report exposes the native layout;
+source-request and manifest schemas remain version 1. GPU creation and pipeline readiness
 remain the caller's work.
 
 The frontend generates metadata from the shader. Mark entry points with

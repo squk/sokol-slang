@@ -16,7 +16,7 @@ struct BackendStage {
 // A program owns backend code and reflection. No generated C++ declarations
 // or Slang/Sokol pointers are needed to retain or serialize it.
 struct ProgramArtifact {
-    static constexpr uint32_t format_version = 1;
+    static constexpr uint32_t format_version = 2;
     Json reflection;
     Json layout;
     std::vector<BackendStage> stages;

@@ -107,6 +107,76 @@ int main() {
             "#if FAMILY_MODE != 1\n#error Missing family macro\n#endif\n" + request.source.source;
         require(compile_programs(request).succeeded,
                 "Program families must preserve source definitions");
+        ProgramRequest raster;
+        raster.targets = "glsl430:spirv_vk";
+        raster.source.module_name = "source_identity";
+        raster.source.source_path = "source_identity.slang";
+        raster.source.source = R"(
+            struct Parameters { float scale; };
+            ConstantBuffer<Parameters> ub_material;
+            Texture2D<float4> tex_color;
+            SamplerState smp_tex_color;
+            struct StorageRecord { float4 value; };
+            StructuredBuffer<StorageRecord> instance_parameter_data;
+            struct VertexInput { float3 in_pos : POSITION; };
+            struct Varyings { float4 position : SV_Position; float2 uv : TEXCOORD0; };
+            [shader("vertex")]
+            Varyings vertexMain(VertexInput input) {
+                Varyings output;
+                output.position = float4(input.in_pos * (ub_material.scale + instance_parameter_data[0].value.x), 1.0);
+                output.uv = input.in_pos.xy;
+                return output;
+            }
+            [shader("fragment")]
+            float4 fragmentMain(Varyings input) : SV_Target0 {
+                return tex_color.Sample(smp_tex_color, input.uv) *
+                    (ub_material.scale + instance_parameter_data[0].value.x);
+            }
+        )";
+        raster.programs["draw"].entries = {{"vertex", "vertexMain"}, {"fragment", "fragmentMain"}};
+        raster.programs["draw"].policy = {{"policies",
+                                           {{"tex_color", {{"sample_type", "float"}}},
+                                            {"smp_tex_color", {{"sampler_type", "filtering"}}}}}};
+        const auto raster_result = compile_programs(raster);
+        require(raster_result.succeeded, "Struct-input raster family must compile");
+        const auto &artifact = raster_result.programs.at("draw");
+        require(artifact.to_json().at("version") == 2, "Artifact schema must be version 2");
+        const auto &attribute = artifact.layout.at("attributes").at(0);
+        require(attribute.at("source_name") == "input.in_pos", "Attribute must retain source path");
+        require(attribute.at("name") == "input_in_pos",
+                "Native attribute must retain GLSL spelling");
+        require(artifact.layout.at("uniform_blocks").size() == 2,
+                "Both stages must retain material blocks");
+        for (const auto &block : artifact.layout.at("uniform_blocks")) {
+            const std::string stage =
+                block.at("stage") == "SG_SHADERSTAGE_VERTEX" ? "vertex" : "fragment";
+            require(block.at("source_name") == "ub_material",
+                    "Uniform source identity must be unprefixed");
+            require(block.at("name") == stage + "_ub_material",
+                    "Uniform native identity must retain prefix");
+        }
+        const auto &texture = artifact.layout.at("textures").at(0);
+        require(texture.at("source_name") == "tex_color",
+                "Texture source identity must be unprefixed");
+        require(texture.at("name") == "fragment_tex_color",
+                "Texture native identity must retain prefix");
+        require(texture.at("sample_type") == "SG_IMAGESAMPLETYPE_FLOAT",
+                "Texture sampling policy must remain intact");
+        const auto &sampler = artifact.layout.at("samplers").at(0);
+        require(sampler.at("source_name") == "smp_tex_color",
+                "Sampler source identity must be unprefixed");
+        require(sampler.at("name") == "fragment_smp_tex_color",
+                "Sampler native identity must retain prefix");
+        require(artifact.layout.at("storage_buffers").size() == 2,
+                "Both stages must retain shared storage");
+        for (const auto &buffer : artifact.layout.at("storage_buffers")) {
+            const std::string stage =
+                buffer.at("stage") == "SG_SHADERSTAGE_VERTEX" ? "vertex" : "fragment";
+            require(buffer.at("source_name") == "instance_parameter_data",
+                    "Storage source identity must not change");
+            require(buffer.at("name") == stage + "_instance_parameter_data",
+                    "Storage native identity must retain prefix");
+        }
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
