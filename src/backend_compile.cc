@@ -1,4 +1,5 @@
 #include "backend_internal.h"
+#include "compiler_stack.h"
 #include "generators/sokolc.h"
 #include "manifest.h"
 #include "native_bytecode.h"
@@ -1159,7 +1160,7 @@ static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
         }
 }
 
-ProgramArtifact compile_backend(const BackendRequest &request) {
+static ProgramArtifact compile_backend_impl(const BackendRequest &request) {
     if (request.stages.empty())
         throw std::runtime_error("No SPIR-V stages supplied");
     if (request.targets.empty())
@@ -1203,4 +1204,10 @@ ProgramArtifact compile_backend(const BackendRequest &request) {
         result.reflection["resources"] = resources;
     return result;
 }
+ProgramArtifact compile_backend(const BackendRequest &request) {
+    ProgramArtifact result;
+    run_with_compiler_stack([&] { result = compile_backend_impl(request); });
+    return result;
+}
+
 } // namespace sokol_slang

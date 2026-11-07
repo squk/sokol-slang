@@ -32,6 +32,8 @@ struct BackendRequest {
 };
 
 // Throws std::runtime_error on invalid SPIR-V, policy, limits or interfaces.
-// Reuses the CLI's binding allocator and backend translator; creates no GPU data.
+// Runs CPU translation synchronously on a private 8 MiB stack and joins before
+// returning. The caller bounds concurrent calls; this function creates no GPU data.
+// Thread setup failures throw std::system_error.
 ProgramArtifact compile_backend(const BackendRequest &request);
 } // namespace sokol_slang

@@ -185,7 +185,8 @@ int main() {
             }
         )";
         raster.programs["draw"].entries = {{"vertex", "vertexMain"}, {"fragment", "fragmentMain"}};
-        raster.programs["draw"].policy = {{"policies",
+        raster.programs["draw"].policy = {{"clip_depth", "zero_to_one"},
+                                          {"policies",
                                            {{"tex_color", {{"sample_type", "float"}}},
                                             {"smp_tex_color", {{"sampler_type", "filtering"}}}}}};
         const auto raster_result = compile_programs(raster);
