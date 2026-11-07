@@ -29,11 +29,14 @@ struct BackendRequest {
     Json manifest;
     std::map<std::string, std::vector<uint32_t>> stages;
     std::string targets;
+    // Host Metal/D3D targets compile native bytecode unless source is requested.
+    bool source_only = false;
 };
 
 // Throws std::runtime_error on invalid SPIR-V, policy, limits or interfaces.
 // Runs CPU translation synchronously on a private 8 MiB stack and joins before
 // returning. The caller bounds concurrent calls; this function creates no GPU data.
+// Native tools use a private directory removed before return, including failures.
 // Thread setup failures throw std::system_error.
 ProgramArtifact compile_backend(const BackendRequest &request);
 } // namespace sokol_slang

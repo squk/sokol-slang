@@ -178,6 +178,12 @@ reflection, dependencies, diagnostics and the complete program map. A failure
 returns no partial program map; source success remains distinct from family
 success. The caller owns job scheduling, caching and GPU preparation.
 
+Library requests compile native Metal bytecode on Apple hosts and DXBC on Windows
+by default, matching the CLI. Set `BackendRequest::source_only` or
+`ProgramRequest::source_only` to keep source instead; the frontend-result overload
+also accepts this flag. Native tools use a private directory that the call removes
+on success or failure. No GPU work runs in these calls.
+
 `ProgramArtifact::layout` exports merged attributes, uniform blocks and members,
 texture/sampler pairs, storage resources, fragment outputs and compute workgroup
 sizes. It uses the C-header generator's enum mappings and includes native binding

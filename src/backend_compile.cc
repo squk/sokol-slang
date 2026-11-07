@@ -11,6 +11,7 @@
 #include "spirv_reflect.hpp"
 #include "tint/tint.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1160,6 +1161,44 @@ static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
         }
 }
 
+// Each backend call owns the native compiler's files. Atomic directory creation
+// keeps concurrent calls and processes separate; cleanup never throws.
+class NativeBytecodeDirectory {
+  public:
+    explicit NativeBytecodeDirectory(bool enabled) {
+        if (!enabled)
+            return;
+        static std::atomic<uint64_t> sequence = 0;
+        const auto root = std::filesystem::temp_directory_path();
+        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (unsigned attempt = 0; attempt != 128; ++attempt) {
+            auto candidate = root / ("sokol-slang-native-" + std::to_string(nonce) + "-" +
+                                     std::to_string(++sequence));
+            std::error_code error;
+            if (std::filesystem::create_directory(candidate, error)) {
+                path_ = std::move(candidate);
+                return;
+            }
+            if (error && error != std::errc::file_exists)
+                throw std::filesystem::filesystem_error("Cannot create native shader directory",
+                                                        candidate, error);
+        }
+        throw std::runtime_error("Cannot reserve a native shader directory");
+    }
+    ~NativeBytecodeDirectory() {
+        if (!path_.empty()) {
+            std::error_code ignored;
+            std::filesystem::remove_all(path_, ignored);
+        }
+    }
+    NativeBytecodeDirectory(const NativeBytecodeDirectory &) = delete;
+    NativeBytecodeDirectory &operator=(const NativeBytecodeDirectory &) = delete;
+    const std::filesystem::path &path() const { return path_; }
+
+  private:
+    std::filesystem::path path_;
+};
+
 static ProgramArtifact compile_backend_impl(const BackendRequest &request) {
     if (request.stages.empty())
         throw std::runtime_error("No SPIR-V stages supplied");
@@ -1194,11 +1233,14 @@ static ProgramArtifact compile_backend_impl(const BackendRequest &request) {
                                      ":" + key.second);
     }
     auto manifest = Manifest::from_document(document, path);
-    std::map<std::string, std::string> options{{"--source", ""}};
+    std::map<std::string, std::string> options;
+    if (request.source_only)
+        options["--source"] = "";
     if (!request.targets.empty())
         options["--targets"] = request.targets;
+    NativeBytecodeDirectory work(!request.source_only);
     ProgramArtifact result;
-    generate_program(manifest, options, {}, "", false, &request.stages, &result);
+    generate_program(manifest, options, work.path(), "", false, &request.stages, &result);
     source_names(result, manifest, inspections);
     if (!resources.is_null())
         result.reflection["resources"] = resources;

@@ -17,6 +17,8 @@ struct ProgramRequest {
     SourceRequest source;
     std::map<std::string, ProgramSelection> programs;
     std::string targets;
+    // Match BackendRequest: native host bytecode by default, source on request.
+    bool source_only = false;
 };
 
 struct ProgramResult {
@@ -35,6 +37,7 @@ ProgramResult compile_programs(const ProgramRequest &request);
 // module_name supplies the same backend identity used by ProgramRequest.
 ProgramResult compile_programs(SourceResult source,
                                const std::map<std::string, ProgramSelection> &programs,
-                               const std::string &targets, const std::string &module_name);
+                               const std::string &targets, const std::string &module_name,
+                               bool source_only = false);
 
 } // namespace sokol_slang

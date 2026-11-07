@@ -62,9 +62,56 @@ static void check_source_request_isolation() {
             "Second compiler thread lost its request inputs");
 }
 
+#if defined(__APPLE__)
+static void check_metal_library_output() {
+    ProgramRequest request;
+    request.targets = "metal_macos";
+    request.source.module_name = "native_metal";
+    request.source.source_path = "native_metal.slang";
+    request.source.source = R"(
+        [shader("compute")]
+        [numthreads(1, 1, 1)]
+        void computeMain(uint3 id : SV_DispatchThreadID) {}
+    )";
+    request.programs["compute"].entries = {{"compute", "computeMain"}};
+    const auto native = compile_programs(request);
+    for (const auto &diagnostic : native.source.diagnostics)
+        std::cerr << diagnostic.phase << ": " << diagnostic.text << '\n';
+    require(native.succeeded, "Metal library requests must compile native bytecode by default");
+    const auto check = [](const ProgramResult &result, bool source_only) {
+        require(result.succeeded && result.programs.size() == 1,
+                "Metal family must contain its selected program");
+        const auto &stages = result.programs.at("compute").stages;
+        require(stages.size() == 1 && stages.front().target == "metal_macos",
+                "Metal family must contain its selected stage");
+        const auto &stage = stages.front();
+        if (source_only) {
+            require(stage.bytecode.empty() && !stage.source.empty(),
+                    "Explicit source mode must preserve Metal source without bytecode");
+        } else {
+            require(stage.source.empty() && stage.bytecode.size() >= 4 &&
+                        std::string(stage.bytecode.begin(), stage.bytecode.begin() + 4) == "MTLB",
+                    "Default Metal output must own a metallib instead of source");
+        }
+    };
+    check(native, false);
+    request.source_only = true;
+    check(compile_programs(request), true);
+    check(compile_programs(native.source, request.programs, request.targets,
+                           request.source.module_name, true),
+          true);
+    check(compile_programs(native.source, request.programs, request.targets,
+                           request.source.module_name),
+          false);
+}
+#endif
+
 int main() {
     try {
         check_source_request_isolation();
+#if defined(__APPLE__)
+        check_metal_library_output();
+#endif
         ProgramRequest request;
         request.targets = "spirv_vk";
         require(!compile_programs(request).succeeded, "Empty family must fail");

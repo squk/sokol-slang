@@ -40,7 +40,7 @@ ProgramResult compile_programs(const ProgramRequest &request) {
         // Selections define the exact entry set; no discovery or extra stages.
         source.entry_points.assign(entries.begin(), entries.end());
         return compile_programs(compile_source(source), request.programs, request.targets,
-                                source.module_name);
+                                source.module_name, request.source_only);
     } catch (const std::exception &error) {
         result.source.diagnostics.push_back({"request", error.what()});
         return result;
@@ -49,7 +49,8 @@ ProgramResult compile_programs(const ProgramRequest &request) {
 
 ProgramResult compile_programs(SourceResult source,
                                const std::map<std::string, ProgramSelection> &programs,
-                               const std::string &targets, const std::string &module_name) {
+                               const std::string &targets, const std::string &module_name,
+                               bool source_only) {
     ProgramResult result;
     result.source = std::move(source);
     std::string phase = "request";
@@ -75,6 +76,7 @@ ProgramResult compile_programs(SourceResult source,
             backend.manifest["module"] = module_name;
             backend.manifest["program"] = name;
             backend.targets = targets;
+            backend.source_only = source_only;
             for (const auto &[stage, entry] : program.entries) {
                 const auto found = available.find({stage, entry});
                 if (found == available.end())
