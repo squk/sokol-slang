@@ -121,6 +121,44 @@ def main():
             if sample != "depth":
                 manifest["resources"][3]["sampler_type"] = "filtering"
                 generate("metal_macos", "require a nonfiltering sampler")
+        # Seventeen textures fit Metal's Sokol limit, but exceed the portable
+        # minimum used for the other targets. All textures share one sampler.
+        manifest = json.loads((root / "tests/fixtures/portable/glsl/manifest.json").read_text())
+        declarations = []
+        samples = []
+        for index in range(16):
+            declarations.append(
+                f"layout(set=5, binding={20 + index}) uniform texture2D extra{index};"
+            )
+            samples.append(f"color += texture(sampler2D(extra{index}, smp), varying_uv);")
+            manifest["resources"].append(
+                {
+                    "stage": "fragment",
+                    "set": 5,
+                    "binding": 20 + index,
+                    "name": f"extra{index}",
+                    "kind": "texture",
+                    "slot": 6 + index,
+                    "sample_type": "float",
+                }
+            )
+        source = original.replace("void main()", "\n".join(declarations) + "\nvoid main()")
+        source = source.replace("* params.tint;", "* params.tint;\n" + "\n".join(samples))
+        (work / "input.frag").write_text(source)
+        run(
+            [
+                args.glslang,
+                "-V",
+                "--target-env",
+                "vulkan1.1",
+                str(work / "input.frag"),
+                "-o",
+                str(work / "generic_fragment.spv"),
+            ]
+        )
+        for target in ("metal_macos", "metal_ios", "metal_sim"):
+            generate(target)
+        generate("wgsl", "textures 17/16")
     print(
         "PASS: integer loads, depth comparisons, unfilterable sampling, 11 dialects and metadata diagnostics"
     )

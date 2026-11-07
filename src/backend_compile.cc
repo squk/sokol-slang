@@ -567,10 +567,23 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             analysis.has_decoration(output.id, spv::DecorationLocation))
             slots.track_fs_output_location(
                 analysis.get_decoration(output.id, spv::DecorationLocation));
+    // Sokol exposes 32 texture bindings on Metal. Sixteen is the portable
+    // minimum; BindSlot still checks the shared view and sampler limits.
+    const bool metal =
+        target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::METAL_SIM;
+    const size_t texture_limit = metal ? MaxViews : SG_MAX_PORTABLE_TEXTURE_BINDINGS_PER_STAGE;
     if (resources.uniform_buffers.size() > 8 || resources.storage_buffers.size() > 8 ||
-        resources.storage_images.size() > 8 || resources.separate_images.size() > 16 ||
-        resources.separate_samplers.size() > 12)
-        throw std::runtime_error("resource count exceeds the pinned Sokol stage limits");
+        resources.storage_images.size() > 8 || resources.separate_images.size() > texture_limit ||
+        resources.separate_samplers.size() > MaxSamplers)
+        throw std::runtime_error(
+            std::string(Slang::to_str(target)) + " " + stage_name +
+            ": resource count exceeds stage limits (uniforms " +
+            std::to_string(resources.uniform_buffers.size()) + "/8, storage buffers " +
+            std::to_string(resources.storage_buffers.size()) + "/8, storage images " +
+            std::to_string(resources.storage_images.size()) + "/8, textures " +
+            std::to_string(resources.separate_images.size()) + "/" + std::to_string(texture_limit) +
+            ", samplers " + std::to_string(resources.separate_samplers.size()) + "/" +
+            std::to_string(MaxSamplers) + ")");
     slots.allocate_backend_slots(shader_stage);
     auto remap = [&](Compiler &compiler) {
         auto assign = [&](const auto &list, int category) {
