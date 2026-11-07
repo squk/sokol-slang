@@ -1,7 +1,8 @@
 #include "program_compile.h"
-#include <iostream>
 #include <algorithm>
+#include <iostream>
 #include <stdexcept>
+#include <utility>
 
 using namespace sokol_slang;
 
@@ -32,6 +33,56 @@ int main() {
         require(result.programs.size() == 2, "Both programs must be returned");
         require(!result.programs.at("first").stages.at(0).bytecode.empty(),
                 "Vulkan artifact must own bytecode");
+
+        const auto frontend = result.source;
+        auto captured = frontend;
+        captured.compiler_identity = "owned frontend identity";
+        captured.dependency_paths.push_back("owned-only.slang");
+        const auto reused = compile_programs(std::move(captured), request.programs, request.targets,
+                                             request.source.module_name);
+        require(reused.succeeded && reused.programs.size() == 2,
+                "Owned frontend result must compile a backend family");
+        require(reused.source.compiler_identity == "owned frontend identity" &&
+                    reused.source.dependency_paths.back() == "owned-only.slang",
+                "Backend reuse must preserve owned frontend metadata");
+        require(reused.source.stages.front().spirv == frontend.stages.front().spirv,
+                "Backend reuse must preserve frontend SPIR-V");
+        require(reused.programs.at("first").to_json() == result.programs.at("first").to_json(),
+                "Reused frontend must produce the same program artifact");
+        SourceResult failed_source;
+        failed_source.diagnostics.push_back({"frontend", "original failure"});
+        auto failed_reuse = compile_programs(std::move(failed_source), request.programs,
+                                             request.targets, request.source.module_name);
+        require(!failed_reuse.succeeded && failed_reuse.programs.empty() &&
+                    failed_reuse.source.diagnostics.size() == 1 &&
+                    failed_reuse.source.diagnostics.front().text == "original failure",
+                "Failed frontend results must retain diagnostics and skip backend programs");
+        auto duplicate_source = frontend;
+        duplicate_source.stages.push_back(duplicate_source.stages.front());
+        failed_reuse = compile_programs(std::move(duplicate_source), request.programs,
+                                        request.targets, request.source.module_name);
+        require(!failed_reuse.succeeded && failed_reuse.programs.empty() &&
+                    failed_reuse.source.diagnostics.back().text.find("Duplicate compiled entry") !=
+                        std::string::npos,
+                "Backend reuse must reject duplicate compiled entries");
+        auto missing_selection = request.programs;
+        missing_selection.at("first").entries = {{"compute", "notCompiled"}};
+        failed_reuse = compile_programs(frontend, missing_selection, request.targets,
+                                        request.source.module_name);
+        require(!failed_reuse.succeeded && failed_reuse.programs.empty() &&
+                    failed_reuse.source.diagnostics.back().phase == "program first",
+                "Backend reuse must reject missing selected entries and clear the family");
+        missing_selection.at("first").entries = {{"fragment", "computeMain"}};
+        failed_reuse = compile_programs(frontend, missing_selection, request.targets,
+                                        request.source.module_name);
+        require(!failed_reuse.succeeded && failed_reuse.programs.empty() &&
+                    failed_reuse.source.diagnostics.back().phase == "request",
+                "Backend reuse must reject incomplete raster selections");
+        require(!compile_programs(frontend, request.programs, request.targets, "").succeeded,
+                "Backend reuse needs an explicit module name");
+        require(
+            !compile_programs(frontend, request.programs, "", request.source.module_name).succeeded,
+            "Backend reuse needs explicit targets");
 
         request.programs["z_invalid_name!"].entries = {{"compute", "computeMain"}};
         result = compile_programs(request);

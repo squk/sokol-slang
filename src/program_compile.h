@@ -30,4 +30,10 @@ struct ProgramResult {
 // Owns all output, performs no file I/O and creates no GPU objects.
 ProgramResult compile_programs(const ProgramRequest &request);
 
+// Reuses owned frontend SPIR-V and metadata without compiling source again.
+// module_name supplies the same backend identity used by ProgramRequest.
+ProgramResult compile_programs(SourceResult source,
+                               const std::map<std::string, ProgramSelection> &programs,
+                               const std::string &targets, const std::string &module_name);
+
 } // namespace sokol_slang
