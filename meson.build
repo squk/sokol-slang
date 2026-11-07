@@ -1,7 +1,7 @@
 # Set the SDK before Meson checks compilers. host_machine is not available
 # until project() runs, so Python identifies the build OS here. Cross builds
 # keep their toolchain SDK; explicit Meson compiler options override these defaults.
-project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.1',
+project('sokol-slang', ['c', 'cpp'], version: '0.1.0', meson_version: '>=1.3',
   default_options: ['c_std=c11', 'cpp_std=c++20', 'build.cpp_std=c++20', 'warning_level=1'] + (
     run_command('python3', '-c', 'import sys; print(sys.platform)', check: true).stdout().strip() == 'darwin'
     and not meson.is_cross_build() ? [
@@ -50,7 +50,7 @@ endif
 # Cross-built players consume cooked data and never link this dependency.
 if get_option('compiler_library') and get_option('slang')
   slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
-  slang_sdk_include = include_directories(slang_sdk_root / 'include')
+  slang_sdk_include = include_directories(fs.relative_to(slang_sdk_root / 'include', meson.current_source_dir()))
   slang_sdk_library = meson.get_compiler('cpp', native: true).find_library('slang', dirs: slang_sdk_root / 'lib', native: true)
   source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
     include_directories: slang_sdk_include, dependencies: slang_sdk_library, native: true)
