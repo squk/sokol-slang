@@ -54,8 +54,20 @@ static SourceRequest request() {
             float plain;
         };
     )";
+    request.files["/captured/attributes.slang"] = R"(
+        module "attributes";
+        public enum TextureSampleType { Float, UnfilterableFloat, Depth, Sint, Uint };
+        [__AttributeUsage(_AttributeTargets.Var)]
+        public struct TexturePolicyAttribute { TextureSampleType sample_type; };
+    )";
+    request.files["/captured/forward_fog.slang"] = R"(
+        module "forward_fog";
+        import attributes;
+        [TexturePolicy(TextureSampleType.Float)] public Texture2D<float4> tex_reflection_atlas;
+    )";
     request.source = R"(
         import controls;
+        import forward_fog;
         [__AttributeUsage(_AttributeTargets.Var)]
         struct ImageControlAttribute {};
         [ImageControl] Texture2DArray<float4> tex_image;
@@ -92,6 +104,14 @@ int main() {
         const auto &metadata = attribute(member, "Metadata");
         require(metadata.arguments.size() == 6, "Attribute argument count must survive");
         using K = SourceAttributeArgument::Kind;
+        const auto &texture_policy =
+            attribute(declaration(result, "::tex_reflection_atlas"), "TexturePolicy");
+        require(texture_policy.arguments.size() == 1 &&
+                    texture_policy.arguments[0].kind == K::EnumInt32 &&
+                    std::get<int32_t>(texture_policy.arguments[0].value) == 0 &&
+                    texture_policy.arguments[0].type_name.find("TextureSampleType") !=
+                        std::string::npos,
+                "Imported texture policy enums must retain their declared type and value");
         require(metadata.arguments[0].kind == K::String &&
                     std::get<std::string>(metadata.arguments[0].value) == std::string("a\0b", 3),
                 "Strings must preserve their explicit byte length");

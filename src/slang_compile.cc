@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <map>
 #include <set>
 #include <slang-com-ptr.h>
 #include <slang.h>
@@ -271,10 +272,65 @@ SourceType describe_type(slang::TypeReflection *type) {
     return result;
 }
 
-SourceAttributeArgument attribute_argument(slang::Attribute *attribute, uint32_t index) {
+// These types borrow the Slang session and exist only while copying declarations.
+// Imported enum constants can lack an argument type; the attribute's declared
+// fields still give the compiler's type, without guessing from its value getter.
+using AttributeSignatures = std::map<std::string, std::set<slang::TypeReflection *>>;
+
+AttributeSignatures attribute_signatures(const std::vector<slang::IModule *> &modules) {
+    AttributeSignatures signatures;
+    for (auto *module : modules) {
+        std::set<slang::DeclReflection *> visited;
+        std::function<void(slang::DeclReflection *, const std::string &)> walk;
+        walk = [&](slang::DeclReflection *decl, const std::string &parent) {
+            if (!decl || !visited.insert(decl).second)
+                return;
+            const std::string name = decl->getName() ? decl->getName() : "";
+            const std::string path = parent.empty() ? name : parent + "::" + name;
+            if (decl->getKind() == slang::DeclReflection::Kind::Struct &&
+                name.ends_with("Attribute")) {
+                if (auto *type = decl->getType()) {
+                    for (const auto &alias : {name, path, type_name(type)}) {
+                        if (alias.empty())
+                            continue;
+                        signatures[alias].insert(type);
+                        if (alias.ends_with("Attribute"))
+                            signatures[alias.substr(0, alias.size() - 9)].insert(type);
+                    }
+                }
+            }
+            for (unsigned i = 0; i < decl->getChildrenCount(); ++i)
+                walk(decl->getChild(i),
+                     decl->getKind() == slang::DeclReflection::Kind::Module
+                         ? std::string(module->getName() ? module->getName() : "")
+                         : path);
+        };
+        walk(module->getModuleReflection(), "");
+    }
+    return signatures;
+}
+
+slang::TypeReflection *declared_argument_type(slang::Attribute *attribute, uint32_t index,
+                                              const AttributeSignatures &signatures) {
+    const auto found = signatures.find(attribute->getName());
+    if (found == signatures.end())
+        throw std::runtime_error("Attribute argument type and declaration are unavailable");
+    if (found->second.size() != 1)
+        throw std::runtime_error("Attribute declaration name is ambiguous");
+    auto *type = *found->second.begin();
+    if (index >= type->getFieldCount())
+        throw std::runtime_error("Attribute argument has no declared field");
+    auto *field = type->getFieldByIndex(index);
+    if (!field || !field->getType())
+        throw std::runtime_error("Attribute field type is unavailable");
+    return field->getType();
+}
+
+SourceAttributeArgument attribute_argument(slang::Attribute *attribute, uint32_t index,
+                                           const AttributeSignatures &signatures) {
     auto *type = attribute->getArgumentType(index);
     if (!type)
-        throw std::runtime_error("Attribute argument type is unavailable");
+        type = declared_argument_type(attribute, index, signatures);
     SourceAttributeArgument result;
     result.type_name = type_name(type);
     // This getter returns null for every non-string argument; it does not
@@ -326,7 +382,8 @@ SourceAttributeArgument attribute_argument(slang::Attribute *attribute, uint32_t
 }
 
 template <typename Reflection>
-std::vector<SourceAttribute> describe_attributes(Reflection *reflection, const std::string &path) {
+std::vector<SourceAttribute> describe_attributes(Reflection *reflection, const std::string &path,
+                                                 const AttributeSignatures &signatures) {
     std::vector<SourceAttribute> result;
     for (unsigned index = 0; index < reflection->getUserAttributeCount(); ++index) {
         auto *attribute = reflection->getUserAttributeByIndex(index);
@@ -336,7 +393,7 @@ std::vector<SourceAttribute> describe_attributes(Reflection *reflection, const s
         output.name = attribute->getName();
         try {
             for (uint32_t argument = 0; argument < attribute->getArgumentCount(); ++argument)
-                output.arguments.push_back(attribute_argument(attribute, argument));
+                output.arguments.push_back(attribute_argument(attribute, argument, signatures));
         } catch (const std::exception &error) {
             throw std::runtime_error(path + " [" + output.name + "]: " + error.what());
         }
@@ -347,6 +404,24 @@ std::vector<SourceAttribute> describe_attributes(Reflection *reflection, const s
 
 std::vector<SourceDeclaration> source_declarations(slang::ISession *session, slang::IModule *root,
                                                    const SourceFiles &files) {
+    std::vector<slang::IModule *> captured_modules{root};
+    for (SlangInt i = 0; i < session->getLoadedModuleCount(); ++i) {
+        auto *module = session->getLoadedModule(i);
+        if (module && module != root && files.contains(module->getFilePath()) &&
+            std::find(captured_modules.begin(), captured_modules.end(), module) ==
+                captured_modules.end())
+            captured_modules.push_back(module);
+    }
+    // Imported modules can report a resolved path unlike their captured key.
+    // Their declarations still supply authoritative attribute parameter types.
+    std::vector<slang::IModule *> signature_modules = captured_modules;
+    for (SlangInt i = 0; i < session->getLoadedModuleCount(); ++i) {
+        auto *module = session->getLoadedModule(i);
+        if (module && std::find(signature_modules.begin(), signature_modules.end(), module) ==
+                          signature_modules.end())
+            signature_modules.push_back(module);
+    }
+    const auto signatures = attribute_signatures(signature_modules);
     std::vector<SourceDeclaration> output;
     std::set<std::string> variables;
     const auto variable = [&](slang::VariableReflection *value, const std::string &module,
@@ -361,7 +436,7 @@ std::vector<SourceDeclaration> source_declarations(slang::ISession *session, sla
         if (!variables.insert(declaration.path).second)
             return;
         declaration.type = describe_type(value->getType());
-        declaration.attributes = describe_attributes(value, declaration.path);
+        declaration.attributes = describe_attributes(value, declaration.path, signatures);
         output.push_back(std::move(declaration));
     };
     std::set<slang::IModule *> modules;
@@ -402,14 +477,15 @@ std::vector<SourceDeclaration> source_declarations(slang::ISession *session, sla
                     declaration.path += type_name(function->getParameterByIndex(i)->getType());
                 }
                 declaration.path += ")";
-                declaration.attributes = describe_attributes(function, declaration.path);
+                declaration.attributes =
+                    describe_attributes(function, declaration.path, signatures);
             } else if (kind == slang::DeclReflection::Kind::Namespace) {
                 declaration.kind = SourceDeclaration::Kind::Namespace;
             } else if (kind == slang::DeclReflection::Kind::Generic) {
                 declaration.kind = SourceDeclaration::Kind::Generic;
             } else if (auto *type = decl->getType()) {
                 declaration.type = describe_type(type);
-                declaration.attributes = describe_attributes(type, declaration.path);
+                declaration.attributes = describe_attributes(type, declaration.path, signatures);
                 if (kind == slang::DeclReflection::Kind::Struct)
                     declaration.kind = SourceDeclaration::Kind::Struct;
                 if (kind == slang::DeclReflection::Kind::Enum)
