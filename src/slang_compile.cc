@@ -564,8 +564,10 @@ SourceResult compile_source(const SourceRequest &request) {
         return fail("input", "The root source needs a unique nonempty path");
     Slang::ComPtr<SourceFiles> files;
     files.attach(new SourceFiles(std::move(captured)));
-    Slang::ComPtr<slang::IGlobalSession> global;
-    if (SLANG_FAILED(slang::createGlobalSession(global.writeRef())))
+    // Slang's global session retains the standard library. The SDK requires
+    // separate globals for concurrent threads; request sessions stay fresh.
+    thread_local Slang::ComPtr<slang::IGlobalSession> global;
+    if (!global && SLANG_FAILED(slang::createGlobalSession(global.writeRef())))
         return fail("session", "Cannot create Slang global session");
     result.compiler_identity = global->getBuildTagString();
     slang::TargetDesc target;

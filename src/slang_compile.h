@@ -7,8 +7,9 @@
 
 namespace sokol_slang {
 
-// One call owns a Slang session. Callers may compile separate requests on
-// separate threads; no Slang pointers or renderer objects cross this boundary.
+// Each call owns a fresh Slang session and captured files. The calling thread
+// reuses its own global session for standard-library startup; globals never
+// cross threads. No Slang pointers or renderer objects cross this boundary.
 struct SourceRequest {
     std::string module_name;
     std::string source_path;

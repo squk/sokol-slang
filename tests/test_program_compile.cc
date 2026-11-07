@@ -1,5 +1,6 @@
 #include "program_compile.h"
 #include <algorithm>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -11,8 +12,59 @@ static void require(bool condition, const char *message) {
         throw std::runtime_error(message);
 }
 
+// Inspect executable constants rather than debug source strings, so stale
+// request inputs cannot pass merely by changing emitted source annotations.
+static bool has_uint_constant(const SourceResult &source, uint32_t value) {
+    require(source.succeeded && source.stages.size() == 1, "Source request must compile one stage");
+    const auto &words = source.stages.front().spirv;
+    for (size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16;
+        require(count && count <= words.size() - offset, "Invalid SPIR-V instruction length");
+        if ((words[offset] & 0xffff) == 43 && count == 4 && words[offset + 3] == value)
+            return true; // OpConstant with one 32-bit literal word.
+        offset += count;
+    }
+    return false;
+}
+
+static void check_source_request_isolation() {
+    SourceRequest request;
+    request.module_name = "request_isolation";
+    request.source_path = "request_isolation.slang";
+    request.entry_points = {"main"};
+    request.defines = {{"REQUEST_VALUE", "1011"}};
+    request.files["captured_values.slang"] = "public uint readValue() { return REQUEST_VALUE; }";
+    request.source = R"(
+        import captured_values;
+        RWStructuredBuffer<uint> result;
+        [shader("compute")] [numthreads(1, 1, 1)]
+        void main(uint3 id : SV_DispatchThreadID) { result[id.x] = readValue(); }
+    )";
+    require(has_uint_constant(compile_source(request), 1011),
+            "Initial request constant is missing");
+    auto macros = request;
+    macros.defines["REQUEST_VALUE"] = "2011";
+    require(has_uint_constant(compile_source(macros), 2011),
+            "Session macros leaked between requests");
+    auto imported = request;
+    imported.files["captured_values.slang"] = "public uint readValue() { return 8081u; }";
+    require(has_uint_constant(compile_source(imported), 8081),
+            "Imported module bytes leaked between requests");
+    auto root = request;
+    root.source.replace(root.source.find("readValue()"), std::string("readValue()").size(),
+                        "9091u");
+    require(has_uint_constant(compile_source(root), 9091),
+            "Root source bytes leaked between requests");
+    auto first = std::async(std::launch::async, [request] { return compile_source(request); });
+    auto second = std::async(std::launch::async, [macros] { return compile_source(macros); });
+    require(has_uint_constant(first.get(), 1011), "First compiler thread lost its request inputs");
+    require(has_uint_constant(second.get(), 2011),
+            "Second compiler thread lost its request inputs");
+}
+
 int main() {
     try {
+        check_source_request_isolation();
         ProgramRequest request;
         request.targets = "spirv_vk";
         require(!compile_programs(request).succeeded, "Empty family must fail");
