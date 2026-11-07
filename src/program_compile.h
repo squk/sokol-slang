@@ -27,7 +27,8 @@ struct ProgramResult {
 };
 
 // Compiles each distinct entry once, then reuses compile_backend for each program.
-// Owns all output, performs no file I/O and creates no GPU objects.
+// Owns all output and reads shader inputs from captured bytes. Backend tools
+// may use temporary files. Creates no GPU objects.
 ProgramResult compile_programs(const ProgramRequest &request);
 
 // Reuses owned frontend SPIR-V and metadata without compiling source again.
