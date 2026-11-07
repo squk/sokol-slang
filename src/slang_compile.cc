@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <set>
 #include <slang-com-ptr.h>
 #include <slang.h>
@@ -104,6 +105,30 @@ SourceResult compile_source(const SourceRequest &request) {
     };
     if (request.module_name.empty() || request.source.find('\0') != std::string::npos)
         return fail("input", "Supply a module name and source without embedded null bytes");
+    if (request.defines.size() >
+            static_cast<size_t>(std::numeric_limits<SlangInt>::max()))
+        return fail("input", "Too many preprocessor definitions");
+    std::vector<slang::PreprocessorMacroDesc> macros;
+    macros.reserve(request.defines.size());
+    for (const auto &[name, value] : request.defines) {
+        const auto letter = [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+        };
+        bool valid = !name.empty() && letter(name.front());
+        for (char c : name)
+            valid &= letter(c) || (c >= '0' && c <= '9');
+        if (!valid) {
+            result.diagnostics.push_back(
+                    {"input", "Invalid preprocessor definition name: " + name});
+            return result;
+        }
+        if (value.find('\0') != std::string::npos) {
+            result.diagnostics.push_back(
+                    {"input", "Preprocessor definition contains a null byte: " + name});
+            return result;
+        }
+        macros.push_back({name.c_str(), value.c_str()});
+    }
     std::set<std::string> names;
     for (const auto &name : request.entry_points)
         if (name.empty() || !names.insert(name).second)
@@ -147,6 +172,8 @@ SourceResult compile_source(const SourceRequest &request) {
     desc.fileSystem = files.get();
     desc.targets = &target;
     desc.targetCount = 1;
+    desc.preprocessorMacros = macros.data();
+    desc.preprocessorMacroCount = static_cast<SlangInt>(macros.size());
     desc.searchPaths = paths.data();
     desc.searchPathCount = paths.size();
     Slang::ComPtr<slang::ISession> session;

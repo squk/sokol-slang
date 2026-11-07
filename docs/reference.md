@@ -160,7 +160,11 @@ file names. Dependency output lists the files Slang actually consumed.
 
 The core's `--source-request request.json -o result.json` route accepts version 1,
 `module_name`, `source_path`, `source`, `entry_points`, optional `files` (path to
-source bytes), `search_paths`, and `profile`. An empty entry list discovers marked
+source bytes), `search_paths`, `defines` (macro names to string values), and
+`profile`. Repeat `-D NAME[=VALUE]` or `--define NAME[=VALUE]` in the frontend;
+a bare name uses `1`. Macro names must be ASCII identifiers. Empty replacement
+values are allowed; duplicate frontend definitions and null bytes are rejected.
+Session macros apply to the root source, includes and imports. An empty entry list discovers marked
 entry points. Results own stage kinds, names, SPIR-V words, reflection, compiler
 identity, dependency paths and diagnostics. This route and in-process callers use
 the same `compile_source` function. `compile_backend` applies Sokol's shared

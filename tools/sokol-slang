@@ -38,6 +38,19 @@ def parse_settings(values, allowed, label):
     return result
 
 
+def parse_defines(values):
+    result = {}
+    for item in values:
+        name, separator, value = item.partition("=")
+        identifier(name)
+        if name in result:
+            raise ValueError(f"duplicate definition: {name}")
+        if "\0" in value:
+            raise ValueError(f"definition contains a null byte: {name}")
+        result[name] = value if separator else "1"
+    return result
+
+
 def parse_slots(values):
     result = {}
     for value in values:
@@ -149,6 +162,7 @@ def compile_programs(args):
         source_path=str(source_path),
         source=source_path.read_text(),
         search_paths=[str(p) for p in roots],
+        defines=parse_defines(args.define),
         files=files,
     )
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
@@ -337,6 +351,10 @@ def parse_args(argv=None):
     parser.add_argument("--reflection", type=Path)
     parser.add_argument("--depfile", type=Path)
     parser.add_argument("--emit-spirv-dir", type=Path)
+    parser.add_argument(
+        "-D", "--define", action="append", default=[], metavar="NAME[=VALUE]",
+        help="Define a session macro (default value: 1)",
+    )
     parser.add_argument("-I", "--include-dir", action="append", type=Path, default=[])
     parser.add_argument(
         "--capture-source",

@@ -83,6 +83,19 @@ class CliTest(unittest.TestCase):
             ):
                 parse_args(["shader.slang", *flags])
 
+    def test_defines_parse_names_values_and_duplicates(self):
+        self.assertEqual(
+            frontend["parse_defines"](["FEATURE", "MODE=7", "EMPTY=", "TEXT=a=b"]),
+            {"FEATURE": "1", "MODE": "7", "EMPTY": "", "TEXT": "a=b"},
+        )
+        args = parse_args(["shader.slang", "-DFEATURE", "--define", "MODE=7"])
+        self.assertEqual(args.define, ["FEATURE", "MODE=7"])
+        for definition in ("1BAD=1", "BAD-NAME=1", "=1", "MODE=x\0y"):
+            with self.assertRaises(ValueError):
+                frontend["parse_defines"]([definition])
+        with self.assertRaisesRegex(ValueError, "duplicate definition"):
+            frontend["parse_defines"](["FEATURE", "FEATURE=0"])
+
     def test_settings_reject_duplicates_and_bad_values(self):
         with self.assertRaisesRegex(ValueError, "duplicate sample type"):
             frontend["parse_settings"](
@@ -167,10 +180,12 @@ class FrontendTest(unittest.TestCase):
             compile_programs(self.args)
 
     def test_batch_compiles_shared_stages_once_and_calls_core_once(self):
+        self.args.define = ["FEATURE", "MODE=7"]
         self.compile()
         self.assertEqual(len(self.source_requests), 1)
         request = self.source_requests[0]
         self.assertEqual(request["entry_points"], ["vs", "fsBase", "fsFull"])
+        self.assertEqual(request["defines"], {"FEATURE": "1", "MODE": "7"})
         self.assertEqual(
             request["files"][str((self.args.include_dir[0] / "shared.slang").resolve())],
             "// captured include\n",
