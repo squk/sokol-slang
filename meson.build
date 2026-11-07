@@ -106,6 +106,9 @@ if get_option('compiler_library') and get_option('slang')
   program_compile_test = executable('test-program-compile', 'tests/test_program_compile.cc',
     dependencies: program_compiler_dep, native: true)
   test('program-compile', program_compile_test, suite: 'compiler-library', timeout: 60)
+  source_declarations_test = executable('test-source-declarations', 'tests/test_source_declarations.cc',
+    dependencies: source_compiler_dep, native: true)
+  test('source-declarations', source_declarations_test, suite: 'compiler-library', timeout: 60)
 endif
 
 if host_machine.system() == 'windows'

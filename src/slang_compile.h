@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace sokol_slang {
@@ -34,14 +35,63 @@ struct CompilerDiagnostic {
     std::string text;
 };
 
+// Engine-neutral declaration metadata copied while the Slang session lives.
+// Unknown type kinds retain their qualified spelling; no SDK pointers escape.
+struct SourceType {
+    enum class Kind {
+        Unknown,
+        Scalar,
+        Vector,
+        Matrix,
+        Struct,
+        Array,
+        ConstantBuffer,
+        ParameterBlock,
+        Resource,
+        Sampler,
+        Enum,
+        Interface,
+        Pointer
+    };
+    Kind kind = Kind::Unknown;
+    std::string qualified_name, scalar_type, element_type, resource_result_type;
+    std::string resource_shape, resource_access;
+    uint32_t rows = 0, columns = 0;
+    bool resource_array = false, resource_multisampled = false;
+};
+
+struct SourceAttributeArgument {
+    enum class Kind { Int32, UInt32, Bool, Float32, String, EnumInt32 };
+    Kind kind = Kind::Int32;
+    std::string type_name;
+    std::variant<int32_t, uint32_t, bool, float, std::string> value = int32_t{0};
+};
+struct SourceAttribute {
+    std::string name;
+    std::vector<SourceAttributeArgument> arguments;
+};
+struct SourceDeclaration {
+    enum class Kind { Unknown, Struct, Variable, Function, Namespace, Enum, Generic };
+    Kind kind = Kind::Unknown;
+    // path includes module and enclosing declaration names. Function paths
+    // include parameter types so overloaded declarations remain distinct.
+    std::string module, path, name;
+    SourceType type;
+    std::vector<SourceAttribute> attributes;
+};
+
 // Owns every byte after the Slang session ends. This is frontend SPIR-V and
 // Slang reflection, before Sokol binding allocation and backend translation.
 // It is not a cooked Sokol program artifact.
 struct SourceResult {
+    static constexpr uint32_t declaration_format_version = 1;
     bool succeeded = false;
     std::string compiler_identity;
     std::vector<StageCode> stages;
     std::string reflection_json;
+    // Includes unreferenced declarations exposed by module reflection. This is
+    // not a per-entry reachability or optimized instance-buffer access report.
+    std::vector<SourceDeclaration> declarations;
     std::vector<std::string> dependency_paths;
     std::vector<CompilerDiagnostic> diagnostics;
 };

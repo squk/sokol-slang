@@ -1,11 +1,14 @@
 #include "slang_compile.h"
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <set>
 #include <slang-com-ptr.h>
 #include <slang.h>
+#include <stdexcept>
 
 namespace sokol_slang {
 namespace {
@@ -72,6 +75,7 @@ class SourceFiles final : public ISlangFileSystem {
             delete this;
         return remaining;
     }
+    bool contains(const char *path) const { return path && files_.contains(source_path(path)); }
     SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char *path, ISlangBlob **out) override {
         *out = nullptr;
         const auto found = files_.find(source_path(path));
@@ -91,6 +95,345 @@ std::string blob_text(ISlangBlob *blob) {
         return {};
     return {static_cast<const char *>(blob->getBufferPointer()), blob->getBufferSize()};
 }
+
+std::string type_name(slang::TypeReflection *type) {
+    if (!type)
+        return {};
+    Slang::ComPtr<ISlangBlob> name;
+    if (SLANG_SUCCEEDED(type->getFullName(name.writeRef())) && name)
+        return blob_text(name.get());
+    return type->getName() ? type->getName() : "";
+}
+
+SourceType describe_type(slang::TypeReflection *type) {
+    SourceType result;
+    if (!type)
+        return result;
+    result.qualified_name = type_name(type);
+    using K = slang::TypeReflection::Kind;
+    using O = SourceType::Kind;
+    switch (type->getKind()) {
+    case K::Scalar:
+        result.kind = O::Scalar;
+        break;
+    case K::Vector:
+        result.kind = O::Vector;
+        break;
+    case K::Matrix:
+        result.kind = O::Matrix;
+        break;
+    case K::Struct:
+        result.kind = O::Struct;
+        break;
+    case K::Array:
+        result.kind = O::Array;
+        break;
+    case K::ConstantBuffer:
+        result.kind = O::ConstantBuffer;
+        break;
+    case K::ParameterBlock:
+        result.kind = O::ParameterBlock;
+        break;
+    case K::Resource:
+        result.kind = O::Resource;
+        break;
+    case K::SamplerState:
+        result.kind = O::Sampler;
+        break;
+    case K::Enum:
+        result.kind = O::Enum;
+        break;
+    case K::Interface:
+        result.kind = O::Interface;
+        break;
+    case K::Pointer:
+        result.kind = O::Pointer;
+        break;
+    default:
+        break;
+    }
+    using S = slang::TypeReflection::ScalarType;
+    switch (type->getScalarType()) {
+    case S::Void:
+        result.scalar_type = "void";
+        break;
+    case S::Bool:
+        result.scalar_type = "bool";
+        break;
+    case S::Int8:
+        result.scalar_type = "int8";
+        break;
+    case S::UInt8:
+        result.scalar_type = "uint8";
+        break;
+    case S::Int16:
+        result.scalar_type = "int16";
+        break;
+    case S::UInt16:
+        result.scalar_type = "uint16";
+        break;
+    case S::Int32:
+        result.scalar_type = "int32";
+        break;
+    case S::UInt32:
+        result.scalar_type = "uint32";
+        break;
+    case S::Int64:
+        result.scalar_type = "int64";
+        break;
+    case S::UInt64:
+        result.scalar_type = "uint64";
+        break;
+    case S::Float16:
+        result.scalar_type = "float16";
+        break;
+    case S::Float32:
+        result.scalar_type = "float32";
+        break;
+    case S::Float64:
+        result.scalar_type = "float64";
+        break;
+    default:
+        break;
+    }
+    if (type->getKind() == K::Scalar || type->getKind() == K::Vector ||
+        type->getKind() == K::Matrix) {
+        result.rows = type->getRowCount();
+        result.columns = type->getColumnCount();
+    }
+    if (type->getKind() == K::Array || type->getKind() == K::ConstantBuffer ||
+        type->getKind() == K::ParameterBlock || type->getKind() == K::Pointer)
+        result.element_type = type_name(type->getElementType());
+    if (type->getKind() == K::Resource) {
+        result.resource_result_type = type_name(type->getResourceResultType());
+        const auto shape = type->getResourceShape();
+        switch (shape & SLANG_RESOURCE_BASE_SHAPE_MASK) {
+        case SLANG_TEXTURE_1D:
+            result.resource_shape = "texture_1d";
+            break;
+        case SLANG_TEXTURE_2D:
+            result.resource_shape = "texture_2d";
+            break;
+        case SLANG_TEXTURE_3D:
+            result.resource_shape = "texture_3d";
+            break;
+        case SLANG_TEXTURE_CUBE:
+            result.resource_shape = "texture_cube";
+            break;
+        case SLANG_TEXTURE_BUFFER:
+            result.resource_shape = "texture_buffer";
+            break;
+        case SLANG_STRUCTURED_BUFFER:
+            result.resource_shape = "structured_buffer";
+            break;
+        case SLANG_BYTE_ADDRESS_BUFFER:
+            result.resource_shape = "byte_address_buffer";
+            break;
+        case SLANG_ACCELERATION_STRUCTURE:
+            result.resource_shape = "acceleration_structure";
+            break;
+        case SLANG_TEXTURE_SUBPASS:
+            result.resource_shape = "texture_subpass";
+            break;
+        default:
+            result.resource_shape = "unknown";
+            break;
+        }
+        result.resource_array = (shape & SLANG_TEXTURE_ARRAY_FLAG) != 0;
+        result.resource_multisampled = (shape & SLANG_TEXTURE_MULTISAMPLE_FLAG) != 0;
+        switch (type->getResourceAccess()) {
+        case SLANG_RESOURCE_ACCESS_READ:
+            result.resource_access = "read";
+            break;
+        case SLANG_RESOURCE_ACCESS_READ_WRITE:
+            result.resource_access = "read_write";
+            break;
+        case SLANG_RESOURCE_ACCESS_RASTER_ORDERED:
+            result.resource_access = "raster_ordered";
+            break;
+        case SLANG_RESOURCE_ACCESS_APPEND:
+            result.resource_access = "append";
+            break;
+        case SLANG_RESOURCE_ACCESS_CONSUME:
+            result.resource_access = "consume";
+            break;
+        case SLANG_RESOURCE_ACCESS_WRITE:
+            result.resource_access = "write";
+            break;
+        case SLANG_RESOURCE_ACCESS_FEEDBACK:
+            result.resource_access = "feedback";
+            break;
+        default:
+            result.resource_access = "unknown";
+            break;
+        }
+    }
+    return result;
+}
+
+SourceAttributeArgument attribute_argument(slang::Attribute *attribute, uint32_t index) {
+    auto *type = attribute->getArgumentType(index);
+    if (!type)
+        throw std::runtime_error("Attribute argument type is unavailable");
+    SourceAttributeArgument result;
+    result.type_name = type_name(type);
+    // This getter returns null for every non-string argument; it does not
+    // stringify numbers. Copy the explicit length, including embedded nulls.
+    size_t length = 0;
+    if (const char *value = attribute->getArgumentValueString(index, &length)) {
+        result.kind = SourceAttributeArgument::Kind::String;
+        result.value = std::string(value, length);
+        return result;
+    }
+    using S = slang::TypeReflection::ScalarType;
+    const auto scalar = type->getScalarType();
+    const bool enumeration = type->getKind() == slang::TypeReflection::Kind::Enum;
+    if (enumeration && scalar == S::UInt32)
+        throw std::runtime_error("Unsigned enum attribute arguments are unsupported: " +
+                                 result.type_name);
+    if (type->getKind() != slang::TypeReflection::Kind::Scalar && !enumeration)
+        throw std::runtime_error("Unsupported attribute argument type: " + result.type_name);
+    if (scalar == S::Float32 && !enumeration) {
+        float value;
+        if (SLANG_FAILED(attribute->getArgumentValueFloat(index, &value)))
+            throw std::runtime_error("Cannot read float32 attribute argument");
+        result.kind = SourceAttributeArgument::Kind::Float32;
+        result.value = value;
+        return result;
+    }
+    if (scalar != S::Bool && scalar != S::Int32 && scalar != S::UInt32 &&
+        !(enumeration && scalar == S::None))
+        throw std::runtime_error("Unsupported attribute argument type: " + result.type_name);
+    int value;
+    if (SLANG_FAILED(attribute->getArgumentValueInt(index, &value)))
+        throw std::runtime_error("Cannot read int32 attribute argument");
+    if (enumeration) {
+        result.kind = SourceAttributeArgument::Kind::EnumInt32;
+        result.value = int32_t(value);
+    } else if (scalar == S::Bool) {
+        if (value != 0 && value != 1)
+            throw std::runtime_error("Invalid bool attribute argument");
+        result.kind = SourceAttributeArgument::Kind::Bool;
+        result.value = value != 0;
+    } else if (scalar == S::UInt32) {
+        result.kind = SourceAttributeArgument::Kind::UInt32;
+        result.value = uint32_t(value);
+    } else {
+        result.kind = SourceAttributeArgument::Kind::Int32;
+        result.value = int32_t(value);
+    }
+    return result;
+}
+
+template <typename Reflection>
+std::vector<SourceAttribute> describe_attributes(Reflection *reflection, const std::string &path) {
+    std::vector<SourceAttribute> result;
+    for (unsigned index = 0; index < reflection->getUserAttributeCount(); ++index) {
+        auto *attribute = reflection->getUserAttributeByIndex(index);
+        if (!attribute || !attribute->getName())
+            throw std::runtime_error(path + ": invalid user attribute");
+        SourceAttribute output;
+        output.name = attribute->getName();
+        try {
+            for (uint32_t argument = 0; argument < attribute->getArgumentCount(); ++argument)
+                output.arguments.push_back(attribute_argument(attribute, argument));
+        } catch (const std::exception &error) {
+            throw std::runtime_error(path + " [" + output.name + "]: " + error.what());
+        }
+        result.push_back(std::move(output));
+    }
+    return result;
+}
+
+std::vector<SourceDeclaration> source_declarations(slang::ISession *session, slang::IModule *root,
+                                                   const SourceFiles &files) {
+    std::vector<SourceDeclaration> output;
+    std::set<std::string> variables;
+    const auto variable = [&](slang::VariableReflection *value, const std::string &module,
+                              const std::string &parent) {
+        if (!value || !value->getName())
+            return;
+        SourceDeclaration declaration;
+        declaration.kind = SourceDeclaration::Kind::Variable;
+        declaration.module = module;
+        declaration.name = value->getName();
+        declaration.path = parent + "::" + declaration.name;
+        if (!variables.insert(declaration.path).second)
+            return;
+        declaration.type = describe_type(value->getType());
+        declaration.attributes = describe_attributes(value, declaration.path);
+        output.push_back(std::move(declaration));
+    };
+    std::set<slang::IModule *> modules;
+    const auto inspect = [&](slang::IModule *module) {
+        if (!module || !modules.insert(module).second)
+            return;
+        if (module != root && !files.contains(module->getFilePath()))
+            return;
+        const std::string module_name = module->getName() ? module->getName() : "";
+        std::set<slang::DeclReflection *> visited;
+        std::function<void(slang::DeclReflection *, const std::string &)> walk;
+        walk = [&](slang::DeclReflection *decl, const std::string &parent) {
+            if (!decl || !visited.insert(decl).second)
+                return;
+            const auto kind = decl->getKind();
+            if (kind == slang::DeclReflection::Kind::Module) {
+                for (unsigned i = 0; i < decl->getChildrenCount(); ++i)
+                    walk(decl->getChild(i), parent);
+                return;
+            }
+            if (auto *value = decl->asVariable()) {
+                variable(value, module_name, parent);
+                return;
+            }
+            SourceDeclaration declaration;
+            declaration.module = module_name;
+            declaration.name = decl->getName() ? decl->getName() : "";
+            if (declaration.name.empty())
+                return;
+            declaration.path = parent + "::" + declaration.name;
+            if (auto *function = decl->asFunction()) {
+                declaration.kind = SourceDeclaration::Kind::Function;
+                declaration.type = describe_type(function->getReturnType());
+                declaration.path += "(";
+                for (unsigned i = 0; i < function->getParameterCount(); ++i) {
+                    if (i)
+                        declaration.path += ",";
+                    declaration.path += type_name(function->getParameterByIndex(i)->getType());
+                }
+                declaration.path += ")";
+                declaration.attributes = describe_attributes(function, declaration.path);
+            } else if (kind == slang::DeclReflection::Kind::Namespace) {
+                declaration.kind = SourceDeclaration::Kind::Namespace;
+            } else if (kind == slang::DeclReflection::Kind::Generic) {
+                declaration.kind = SourceDeclaration::Kind::Generic;
+            } else if (auto *type = decl->getType()) {
+                declaration.type = describe_type(type);
+                declaration.attributes = describe_attributes(type, declaration.path);
+                if (kind == slang::DeclReflection::Kind::Struct)
+                    declaration.kind = SourceDeclaration::Kind::Struct;
+                if (kind == slang::DeclReflection::Kind::Enum)
+                    declaration.kind = SourceDeclaration::Kind::Enum;
+            }
+            const auto path = declaration.path;
+            output.push_back(std::move(declaration));
+            for (unsigned i = 0; i < decl->getChildrenCount(); ++i)
+                walk(decl->getChild(i), path);
+            if (kind == slang::DeclReflection::Kind::Struct)
+                if (auto *type = decl->getType())
+                    for (unsigned i = 0; i < type->getFieldCount(); ++i)
+                        variable(type->getFieldByIndex(i), module_name, path);
+        };
+        walk(module->getModuleReflection(), module_name);
+    };
+    inspect(root);
+    for (SlangInt i = 0; i < session->getLoadedModuleCount(); ++i)
+        inspect(session->getLoadedModule(i));
+    std::sort(output.begin(), output.end(),
+              [](const auto &a, const auto &b) { return a.path < b.path; });
+    return output;
+}
+
 } // namespace
 
 SourceResult compile_source(const SourceRequest &request) {
@@ -105,8 +448,7 @@ SourceResult compile_source(const SourceRequest &request) {
     };
     if (request.module_name.empty() || request.source.find('\0') != std::string::npos)
         return fail("input", "Supply a module name and source without embedded null bytes");
-    if (request.defines.size() >
-            static_cast<size_t>(std::numeric_limits<SlangInt>::max()))
+    if (request.defines.size() > static_cast<size_t>(std::numeric_limits<SlangInt>::max()))
         return fail("input", "Too many preprocessor definitions");
     std::vector<slang::PreprocessorMacroDesc> macros;
     macros.reserve(request.defines.size());
@@ -119,12 +461,12 @@ SourceResult compile_source(const SourceRequest &request) {
             valid &= letter(c) || (c >= '0' && c <= '9');
         if (!valid) {
             result.diagnostics.push_back(
-                    {"input", "Invalid preprocessor definition name: " + name});
+                {"input", "Invalid preprocessor definition name: " + name});
             return result;
         }
         if (value.find('\0') != std::string::npos) {
             result.diagnostics.push_back(
-                    {"input", "Preprocessor definition contains a null byte: " + name});
+                {"input", "Preprocessor definition contains a null byte: " + name});
             return result;
         }
         macros.push_back({name.c_str(), value.c_str()});
@@ -186,6 +528,11 @@ SourceResult compile_source(const SourceRequest &request) {
     diagnostic("load", messages);
     if (!module)
         return result;
+    try {
+        result.declarations = source_declarations(session.get(), module, *files.get());
+    } catch (const std::exception &error) {
+        return fail("declarations", error.what());
+    }
     auto entry_names = request.entry_points;
     if (entry_names.empty()) {
         for (int i = 0; i < module->getDefinedEntryPointCount(); ++i) {
