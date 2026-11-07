@@ -37,25 +37,30 @@ slang_frontend = files('tools/sokol-slang')
 if get_option('slang')
   if get_option('slangc') != ''
     slangc = find_program(get_option('slangc'), native: true)
+    if get_option('compiler_library')
+      slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
+      slang_sdk_dep = declare_dependency(
+        include_directories: include_directories(slang_sdk_root / 'include'),
+        dependencies: meson.get_compiler('cpp', native: true).find_library('slang', dirs: slang_sdk_root / 'lib'))
+    endif
   else
     slang_platform = build_machine.system() == 'darwin' ? 'macos' : build_machine.system()
     slang_cpu = build_machine.cpu_family()
     if not ['macos', 'linux', 'windows'].contains(slang_platform) or not ['x86_64', 'aarch64'].contains(slang_cpu)
       error('No pinned Slang package for this build machine. Set -Dslangc=/path/to/slangc (2026.20).')
     endif
-    slangc = subproject('slang-' + slang_platform + '-' + slang_cpu).get_variable('slangc')
+    slang_sdk = subproject('slang-' + slang_platform + '-' + slang_cpu)
+    slangc = slang_sdk.get_variable('slangc')
+    slang_sdk_dep = slang_sdk.get_variable('slang_sdk_dep')
   endif
 endif
 # The CLI and native editor/tool callers share the build-machine Slang library.
 # Cross-built players consume cooked data and never link this dependency.
 if get_option('compiler_library') and get_option('slang')
-  slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
-  slang_sdk_include = include_directories(fs.relative_to(slang_sdk_root / 'include', meson.current_source_dir()))
-  slang_sdk_library = meson.get_compiler('cpp', native: true).find_library('slang', dirs: slang_sdk_root / 'lib', native: true)
   source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
-    include_directories: slang_sdk_include, dependencies: slang_sdk_library, native: true)
+    dependencies: slang_sdk_dep, native: true)
   source_compiler_dep = declare_dependency(link_with: source_compiler,
-    include_directories: include_directories('src'), dependencies: slang_sdk_library)
+    include_directories: include_directories('src'), dependencies: slang_sdk_dep)
   program_compiler = static_library('sokol-slang-program', 'src/program_compile.cc',
     dependencies: [source_compiler_dep, backend_compiler_dep], native: true)
   program_compiler_dep = declare_dependency(link_with: program_compiler,
