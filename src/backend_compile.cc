@@ -178,11 +178,15 @@ static void name_resources(Compiler &compiler, const std::string &stage,
                                          std::to_string(binding));
             compiler.set_name(resource.id, name);
             if (buffer) {
-                if (!types.insert(resource.base_type_id).second)
-                    throw std::runtime_error(
-                        "multiple buffers with one block type are not supported yet");
-                name_members(resource.base_type_id);
-                compiler.set_name(resource.base_type_id, name);
+                // SPIRV-Cross unifies struct types with identical layouts, so
+                // two buffers with the same shape share base_type_id. The first
+                // resource claims the type name; subsequent resources keep
+                // their variable name but reuse the shared struct typedef
+                // downstream. One C typedef, multiple bind slots.
+                if (types.insert(resource.base_type_id).second) {
+                    name_members(resource.base_type_id);
+                    compiler.set_name(resource.base_type_id, name);
+                }
             }
         }
     };
