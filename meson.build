@@ -24,7 +24,7 @@ manifest_schema = custom_target('manifest-schema', input: 'schema/manifest.schem
   output: 'manifest_schema.h', command: [python, files('tools/embed_schema.py'), '@INPUT@', '@OUTPUT@'])
 compiler_threads_dep = dependency('threads', native: true)
 backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc',
-  'src/compiler_stack.cc',
+  'src/compiler_stack.cc', 'src/storage_elements.cc',
   'src/manifest.cc', 'src/program_bindings.cc', 'src/native_bytecode.cc', manifest_schema,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep],
   native: true)
@@ -253,6 +253,13 @@ if glslang.found()
     '--glslang', glslang.full_path()], depends: core, timeout: 120)
 else
   warning('glslangValidator not found: independent GLSL fixtures and core-contract tests are disabled')
+endif
+if get_option('slang')
+  storage_element_args = [files('tests/test_storage_elements.py'), '--core', core.full_path()]
+  if glslang.found()
+    storage_element_args += ['--glslang', glslang.full_path()]
+  endif
+  test('storage-element-contract', python, args: storage_element_args, depends: core, timeout: 120)
 endif
 
 # Slang and GLSL fixtures share the same backend application and pixel oracle.

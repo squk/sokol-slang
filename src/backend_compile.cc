@@ -9,6 +9,7 @@
 #include "spirv_hlsl.hpp"
 #include "spirv_msl.hpp"
 #include "spirv_reflect.hpp"
+#include "storage_elements.h"
 #include "tint/tint.h"
 #include <algorithm>
 #include <atomic>
@@ -394,6 +395,10 @@ Json SokolGenerator::describe_interface(const refl::ProgramReflection &program) 
                      {"slot", buffer.sokol_slot},
                      {"stage", shader_stage(buffer.stage)},
                      {"readonly", buffer.readonly}};
+        // The record type and size match the generated C struct and the array stride.
+        const auto &records = buffer.struct_info.struct_items.at(0);
+        item["struct_name"] = records.struct_typename;
+        item["record_size"] = records.size;
         native_indices(item, buffer);
         result["storage_buffers"].push_back(std::move(item));
     }
@@ -516,7 +521,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             throw std::runtime_error("storage buffer must contain one array of records");
         const auto &record = analysis.get_type(block.member_types[0]);
         if (record.basetype != SPIRType::Struct || record.array.size() != 1 || record.array[0] != 0)
-            throw std::runtime_error("storage buffer must contain one unsized array of records");
+            throw std::runtime_error("storage buffer must contain one unsized array of records "
+                                     "or 32-bit scalars/vectors");
     }
     BindSlotMap slots;
     auto add = [&](const auto &list, const std::string &kind, BindSlot::Type type) {
@@ -1014,11 +1020,13 @@ GeneratedProgram generate_program(const Manifest &manifest,
     std::set<std::string> used;
     Json report = {{"version", 1}, {"targets", Json::object()}};
     std::vector<std::vector<uint32_t>> binaries;
+    // Every backend, reflection and Vulkan output sees scalar and vector
+    // storage buffer elements as one-member records.
     for (const auto &stage : stages)
-        binaries.push_back(
+        binaries.push_back(sokol_slang::wrap_storage_buffer_elements(
             normalize_entry(captured ? captured->at(stage)
                                      : read_spirv(manifest.stage_path(stage).string().c_str()),
-                            manifest.document["stages"][stage]["entry"]));
+                            manifest.document["stages"][stage]["entry"])));
     for (auto target : targets) {
         auto &sources = translated[target].sources;
         for (int i = 0; i < int(stages.size()); ++i) {

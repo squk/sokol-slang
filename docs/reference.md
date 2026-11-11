@@ -294,8 +294,18 @@ Shader limits:
 - No resource arrays, push constants, or multiple buffers sharing one block type.
 - Uniforms: 32-bit float/int scalars/vectors, float4x4, and arrays of float4,
   int4, or float4x4. Single-member array wrappers work; other nested structs do not.
-- Storage buffers: one unsized record array; unsupported on `glsl410`,
-  `glsl300es`, and `hlsl4`. Vertex-stage access must be read-only.
+- Storage buffers: one unsized array of structs or of 32-bit `int`, `uint` or
+  `float` scalars/vectors (`StructuredBuffer<float4>`, `RWStructuredBuffer<uint>`,
+  `ByteAddressBuffer`, which Slang lowers to `uint`). Before translation the
+  core wraps each scalar/vector element in a one-member record named
+  `sokol_<type>_record` with member `value` (for example `sokol_float4_record`),
+  so generated shaders and C headers declare that struct. Buffers with the same
+  element type share it. Elements must use the std430 stride: 4/8/16 bytes for
+  1/2/4 components and 16 for three (`float3` records have 4 bytes of trailing
+  padding in C). Matrix, 16-bit and 64-bit elements are rejected (Slang
+  stores `bool` elements as `int`). Unsupported on `glsl410`, `glsl300es`, and `hlsl4`.
+  Vertex-stage access must be read-only. Layout storage buffer entries report
+  `struct_name` and `record_size` (the array stride).
 - Storage images: non-multisampled 2D, 2D array, or 3D, with a schema-listed
   format. Use textures for read-only access and check `sg_query_pixelformat()`
   for device support.
