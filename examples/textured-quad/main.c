@@ -26,9 +26,9 @@ static void init(void) {
     sg_setup(&setup);
 
     const vertex_t vertices[] = {
-        {-0.75f,  0.75f, 0.0f, 0.0f},
-        { 0.75f,  0.75f, 1.0f, 0.0f},
-        { 0.75f, -0.75f, 1.0f, 1.0f},
+        {-0.75f, 0.75f, 0.0f, 0.0f},
+        {0.75f, 0.75f, 1.0f, 0.0f},
+        {0.75f, -0.75f, 1.0f, 1.0f},
         {-0.75f, -0.75f, 0.0f, 1.0f},
     };
     const uint16_t indices[] = {0, 1, 2, 0, 2, 3};
@@ -57,7 +57,7 @@ static void init(void) {
     sg_image_desc image_desc = {0};
     image_desc.width = image_desc.height = 64;
     image_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
-    image_desc.data.mip_levels[0] = SG_RANGE(pixels);
+    image_desc.data = SG_RANGE(pixels);
     image_desc.label = "checkerboard";
     sg_image image = sg_make_image(&image_desc);
 
@@ -109,11 +109,9 @@ static void frame(void) {
     sg_commit();
 }
 
-static void cleanup(void) {
-    sg_shutdown();
-}
+static void cleanup(void) { sg_shutdown(); }
 
-sapp_desc sokol_main(int argc, char* argv[]) {
+sapp_desc sokol_main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
     sapp_desc desc = {0};
