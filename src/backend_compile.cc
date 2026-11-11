@@ -723,6 +723,10 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     CompilerGLSL::Options gl;
     gl.version = 430;
     gl.emit_uniform_buffer_as_plain_uniforms = true;
+    // BindSlot access comes from the validated SPIR-V above. GLSL's optional
+    // qualifier deduction narrows write-only uses of a read/write image during
+    // compile(), which would make reflection disagree with those same slots.
+    gl.enable_storage_image_qualifier_deduction = false;
     reflect.set_common_options(gl);
     const uint32_t dummy_sampler = prepare_glsl(reflect);
     reflect.compile();
