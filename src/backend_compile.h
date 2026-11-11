@@ -31,6 +31,8 @@ struct BackendRequest {
     std::string targets;
     // Host Metal/D3D targets compile native bytecode unless source is requested.
     bool source_only = false;
+    // Arguments passed verbatim to the host Metal compiler, in order.
+    std::vector<std::string> metal_args;
 };
 
 // Throws std::runtime_error on invalid SPIR-V, policy, limits or interfaces.

@@ -16,8 +16,9 @@ static int compile_source_request(const std::string &input, const std::string &o
     if (!stream)
         throw std::runtime_error("Cannot open source request: " + input);
     const auto document = Json::parse(stream);
-    const std::set<std::string> fields{"version",      "module_name", "source_path",  "source",
-                                       "entry_points", "files",       "search_paths", "profile", "defines"};
+    const std::set<std::string> fields{"version",      "module_name",  "source_path",
+                                       "source",       "entry_points", "files",
+                                       "search_paths", "profile",      "defines"};
     if (!document.is_object() || document.at("version") != 1)
         throw std::runtime_error("Expected source request version 1");
     for (const auto &[name, value] : document.items())
@@ -73,22 +74,34 @@ int main(int argc, char **argv) {
                 constraints.emplace_back(key, argv[i]);
                 continue;
             }
+            if (key == "--metal-arg") {
+                if (++i == argc)
+                    throw std::runtime_error("missing value: " + key);
+                Json values = options.count("--metal-args")
+                                  ? Json::parse(options.at("--metal-args"))
+                                  : Json::array();
+                values.push_back(argv[i]);
+                options["--metal-args"] = values.dump();
+                continue;
+            }
             if (key == "--source") {
                 if (!options.emplace(key, "").second)
                     throw std::runtime_error("duplicate option: " + key);
                 continue;
             }
             if (key == "--help") {
-                std::cout << "sokol-spirv --vertex vertex.spv --fragment fragment.spv -o shader.h\n"
-                             "sokol-spirv --compute compute.spv -o shader.h\n"
-                             "sokol-spirv --manifest programs.json -o shader.h\n"
-                             "sokol-spirv --inspect shader.spv\n"
-                             "sokol-spirv --source-request request.json -o result.json\n"
-                             "Optional: --module NAME --program NAME --targets DIALECTS\n"
-                             "          --reflection FILE --depfile FILE\n"
-                             "          --binding STAGE:NAME=SLOT --sample-type NAME=TYPE "
-                             "--sampler-type NAME=TYPE\n"
-                             "--source: emit native Metal/HLSL source instead of bytecode\n";
+                std::cout
+                    << "sokol-spirv --vertex vertex.spv --fragment fragment.spv -o shader.h\n"
+                       "sokol-spirv --compute compute.spv -o shader.h\n"
+                       "sokol-spirv --manifest programs.json -o shader.h\n"
+                       "sokol-spirv --inspect shader.spv\n"
+                       "sokol-spirv --source-request request.json -o result.json\n"
+                       "Optional: --module NAME --program NAME --targets DIALECTS\n"
+                       "          --reflection FILE --depfile FILE\n"
+                       "          --binding STAGE:NAME=SLOT --sample-type NAME=TYPE "
+                       "--sampler-type NAME=TYPE\n"
+                       "--source: emit native Metal/HLSL source instead of bytecode\n"
+                       "--metal-arg ARG: pass an argument to the Metal compiler (repeatable)\n";
                 return 0;
             }
             if (key != "--manifest" && key != "--output" && key != "--reflection" &&

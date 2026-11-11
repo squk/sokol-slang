@@ -1056,7 +1056,11 @@ GeneratedProgram generate_program(const Manifest &manifest,
                     out = refl::StageAttr{};
             }
         if (!options.count("--source"))
-            compile_native_bytecode(bytecode[target], translated[target], target, native_work);
+            compile_native_bytecode(
+                bytecode[target], translated[target], target, native_work,
+                options.count("--metal-args")
+                    ? Json::parse(options.at("--metal-args")).get<std::vector<std::string>>()
+                    : std::vector<std::string>{});
     }
     for (const auto &[resource, binding] : manifest.bindings)
         if (!used.count(resource))
@@ -1250,6 +1254,8 @@ static ProgramArtifact compile_backend_impl(const BackendRequest &request) {
     }
     auto manifest = Manifest::from_document(document, path);
     std::map<std::string, std::string> options;
+    if (!request.metal_args.empty())
+        options["--metal-args"] = Json(request.metal_args).dump();
     if (request.source_only)
         options["--source"] = "";
     if (!request.targets.empty())

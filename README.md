@@ -31,6 +31,9 @@ The frontend discovers `sokol-spirv` automatically; override with `--core`.
 Slang source compilation runs through its linked compiler library. Select the
 Slang SDK at Meson setup with `-Dslangc=/path/to/slangc`.
 Use `--targets` to select backends and `-I` for imports/includes.
+Pass host Metal compiler flags with repeatable `--metal-arg` options, for example
+`--metal-arg=-Wno-unused-variable`. The backend API uses `BackendRequest::metal_args`.
+These flags do not affect other targets or source-only output.
 
 [Examples](examples/README.md) · [Docker tests](docs/reference.md#docker) · [Reference](docs/reference.md)
 

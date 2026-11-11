@@ -48,7 +48,8 @@ static std::filesystem::path metal_compiler() {
 }
 
 static std::vector<uint8_t> compile_metal(const std::string &source, shdc::Slang::Enum target,
-                                          const std::filesystem::path &path) {
+                                          const std::filesystem::path &path,
+                                          const std::vector<std::string> &metal_args) {
     static const auto compiler = metal_compiler();
     const auto linker = compiler.parent_path() / "metallib";
     auto input = path;
@@ -68,9 +69,18 @@ static std::vector<uint8_t> compile_metal(const std::string &source, shdc::Slang
                                                                   : "air64-apple-ios13.0-simulator";
     // SPIRV-Cross can leave unused constants and uninitialized variables in each entry point's
     // generated source.
-    run_tool({compiler.string(), "-target", triple,
-              macos ? "-std=macos-metal2.1" : "-std=ios-metal2.1", "-Wno-unused-const-variable",
-              "-Wno-uninitialized", "-c", input.string(), "-o", object.string()});
+    std::vector<std::string> command{compiler.string(),
+                                     "-target",
+                                     triple,
+                                     macos ? "-std=macos-metal2.1" : "-std=ios-metal2.1",
+                                     "-Wno-unused-const-variable",
+                                     "-Wno-uninitialized",
+                                     "-c",
+                                     input.string(),
+                                     "-o",
+                                     object.string()};
+    command.insert(command.end(), metal_args.begin(), metal_args.end());
+    run_tool(std::move(command));
     run_tool({linker.string(), object.string(), "-o", library.string()});
     std::ifstream binary(library, std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(binary)), {});
@@ -135,7 +145,8 @@ static std::vector<uint8_t> compile_dxbc(const shdc::SpirvcrossSource &source,
 #endif
 
 void compile_native_bytecode(shdc::Bytecode &bytecode, shdc::Spirvcross &sources,
-                             shdc::Slang::Enum target, const std::filesystem::path &work) {
+                             shdc::Slang::Enum target, const std::filesystem::path &work,
+                             const std::vector<std::string> &metal_args) {
     for (auto &source : sources.sources) {
         shdc::BytecodeBlob blob;
 #if defined(__APPLE__)
@@ -143,7 +154,8 @@ void compile_native_bytecode(shdc::Bytecode &bytecode, shdc::Spirvcross &sources
             std::filesystem::create_directories(work);
             blob.data = compile_metal(source.source_code, target,
                                       work / (std::string(shdc::Slang::to_str(target)) + "_" +
-                                              std::to_string(source.snippet_index)));
+                                              std::to_string(source.snippet_index)),
+                                      metal_args);
         }
 #elif defined(_WIN32)
         if (shdc::Slang::is_hlsl(target))
