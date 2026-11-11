@@ -66,10 +66,11 @@ static std::vector<uint8_t> compile_metal(const std::string &source, shdc::Slang
     const std::string triple = macos                              ? "air64-apple-macos10.14"
                                : target == shdc::Slang::METAL_IOS ? "air64-apple-ios12.0"
                                                                   : "air64-apple-ios13.0-simulator";
-    // SPIRV-Cross can leave unused constants in each entry point's generated source.
+    // SPIRV-Cross can leave unused constants and uninitialized variables in each entry point's
+    // generated source.
     run_tool({compiler.string(), "-target", triple,
               macos ? "-std=macos-metal2.1" : "-std=ios-metal2.1", "-Wno-unused-const-variable",
-              "-c", input.string(), "-o", object.string()});
+              "-Wno-uninitialized", "-c", input.string(), "-o", object.string()});
     run_tool({linker.string(), object.string(), "-o", library.string()});
     std::ifstream binary(library, std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(binary)), {});

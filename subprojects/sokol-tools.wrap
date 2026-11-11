@@ -1,6 +1,6 @@
 [wrap-file]
-directory = sokol-tools-be7a968c1aa76f519d836977aa80a43422823631
-source_url = https://codeload.github.com/floooh/sokol-tools/tar.gz/be7a968c1aa76f519d836977aa80a43422823631
+directory = sokol-tools-f1dcd178743c62265a4e00a594f7ad13b25dea7f
+source_url = https://codeload.github.com/floooh/sokol-tools/tar.gz/f1dcd178743c62265a4e00a594f7ad13b25dea7f
 source_filename = sokol-tools-proof.tar.gz
-source_hash = ca708499743503cd36815d3652c31ec4c241f6d6ee49e7a95e31f04b0394e9df
+source_hash = 845e3e2b0e7e73f31c322e78732f5d7f2e2149a165c1baf326bbdef26a843f0f
 patch_directory = sokol-tools
