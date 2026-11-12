@@ -64,21 +64,21 @@ static std::vector<uint8_t> compile_metal(const std::string &source, shdc::Slang
     if (!stream)
         throw std::runtime_error("cannot write Metal source: " + input.string());
     const bool macos = target == shdc::Slang::METAL_MACOS;
-    const std::string triple = macos                              ? "air64-apple-macos10.14"
-                               : target == shdc::Slang::METAL_IOS ? "air64-apple-ios12.0"
-                                                                  : "air64-apple-ios13.0-simulator";
+    // SPIRV-Cross includes metal_raytracing only for ray query shaders. Those need
+    // Metal 2.4 (macOS 12, iOS 15).
+    const bool ray_query = source.find("metal_raytracing") != std::string::npos;
+    const std::string triple =
+        macos ? (ray_query ? "air64-apple-macos12.0" : "air64-apple-macos10.14")
+        : target == shdc::Slang::METAL_IOS
+            ? (ray_query ? "air64-apple-ios15.0" : "air64-apple-ios12.0")
+            : "air64-apple-ios13.0-simulator";
+    const std::string standard =
+        std::string(macos ? "-std=macos-metal2." : "-std=ios-metal2.") + (ray_query ? "4" : "1");
     // SPIRV-Cross can leave unused constants and uninitialized variables in each entry point's
     // generated source.
-    std::vector<std::string> command{compiler.string(),
-                                     "-target",
-                                     triple,
-                                     macos ? "-std=macos-metal2.1" : "-std=ios-metal2.1",
-                                     "-Wno-unused-const-variable",
-                                     "-Wno-uninitialized",
-                                     "-c",
-                                     input.string(),
-                                     "-o",
-                                     object.string()};
+    std::vector<std::string> command{
+        compiler.string(),    "-target", triple,         standard, "-Wno-unused-const-variable",
+        "-Wno-uninitialized", "-c",      input.string(), "-o",     object.string()};
     command.insert(command.end(), metal_args.begin(), metal_args.end());
     run_tool(std::move(command));
     run_tool({linker.string(), object.string(), "-o", library.string()});

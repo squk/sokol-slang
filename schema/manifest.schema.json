@@ -155,7 +155,8 @@
             "storage_buffer",
             "storage_image",
             "texture",
-            "sampler"
+            "sampler",
+            "acceleration_structure"
           ]
         },
         "slot": {

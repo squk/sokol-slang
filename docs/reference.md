@@ -129,8 +129,8 @@ and a `programs` array using the same stage contract. Unknown/duplicate fields,
 invalid types, and binding collisions are errors.
 
 - A program has vertex/fragment stages or one compute stage. Each SPIR-V module
-  has one entry point; paths are relative to the manifest. SPIR-V through 1.3 is
-  validated, and entry names are normalized to `main`.
+  has one entry point; paths are relative to the manifest. SPIR-V is
+  validated against the version it declares, and entry names are normalized to `main`.
 - Public resource names come from SPIR-V. The optional resolved `resources` form
   supports authored aliases and SPIR-V without resource debug names; it is used
   by the explicit [raster](../tests/fixtures/portable/glsl/manifest.json) and
@@ -139,6 +139,13 @@ invalid types, and binding collisions are errors.
 - Uniform, sampler, and view slots are separate global namespaces. Textures,
   storage buffers, and storage images share view slots. Each stage use needs its
   own Sokol slot; source descriptor numbers need not match native bindings.
+- Ray query: a compute stage may bind up to four `RaytracingAccelerationStructure`
+  resources (kind `acceleration_structure`, own slot namespace 0..3). Sokol has
+  no slot for them, so the native index is Metal buffer `16 + slot` and Vulkan
+  set 1 binding `44 + slot`; the layout lists both in `acceleration_structures`.
+  Only Metal (macOS, iOS) and Vulkan targets accept them; any other target in
+  `--targets` is an error. Compile Slang with `--profile spirv_1_4` or later and
+  `--capability spvRayQueryKHR`. SPIRV-Cross lowers ray query to MSL 2.4.
 - Raster manifests require `clip_depth: "zero_to_one"`; GL output converts to
   negative-one-to-one depth. Use `SV_VulkanVertexID` for raw vertex indices on
   GLES; Slang's `SV_VertexID` requires unsupported `BaseVertex` handling there.

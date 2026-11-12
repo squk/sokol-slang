@@ -20,6 +20,8 @@ struct SourceRequest {
     std::map<std::string, std::string> files;
     std::vector<std::string> search_paths;
     std::string profile = "spirv_1_3";
+    // Slang capability names added to the session, such as spvRayQueryKHR.
+    std::vector<std::string> capabilities;
     // Session macros apply to the root, captured includes and imported modules.
     std::map<std::string, std::string> defines;
 };

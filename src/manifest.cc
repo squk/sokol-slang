@@ -145,9 +145,14 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
                         resource.value("access", "read"),
                         resource.value("format", "")};
         const std::string name = resource["name"];
-        const auto space =
-            binding.kind == "uniform" || binding.kind == "sampler" ? binding.kind : "view";
-        const int limit = binding.kind == "uniform" ? 8 : binding.kind == "sampler" ? 12 : 32;
+        const auto space = binding.kind == "uniform" || binding.kind == "sampler" ||
+                                   binding.kind == "acceleration_structure"
+                               ? binding.kind
+                               : "view";
+        const int limit = binding.kind == "uniform"                  ? 8
+                          : binding.kind == "sampler"                ? 12
+                          : binding.kind == "acceleration_structure" ? 4
+                                                                     : 32;
         if (binding.slot >= limit)
             throw std::runtime_error(name + ": slot must be in 0.." + std::to_string(limit - 1));
         if (!slots.emplace(space, binding.slot).second)
@@ -176,6 +181,9 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
                 throw std::runtime_error(name +
                                          ": Sokol permits storage images only in compute shaders");
         }
+        if (binding.kind == "acceleration_structure" && binding.stage != "compute")
+            throw std::runtime_error(
+                name + ": acceleration structures are only supported in compute shaders");
         if (!manifest.document["stages"].contains(binding.stage))
             throw std::runtime_error(name + ": resource stage is not in this program");
     }

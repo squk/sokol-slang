@@ -114,6 +114,41 @@ static std::string storage_image_access(const Compiler &compiler, const Resource
                                                                             : "read_write";
 }
 
+// Sokol has no bind slot for acceleration structures. A manifest slot (0..3)
+// maps to a native index placed clear of every other resource: Metal buffers
+// 0..7 hold uniform blocks and 8..15 storage buffers, so these start at 16;
+// Vulkan set 1 uses bindings 0..31 for views and 32..43 for samplers.
+// Ray query is available only in compute shaders on Metal and Vulkan.
+static constexpr int MaxAccelerationStructures = 4;
+static constexpr int MslAccelerationBufferBase = 16;
+static constexpr int SpirvAccelerationBindingBase = MaxViews + MaxSamplers;
+
+static bool supports_ray_query(Slang::Enum target) {
+    return target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::SPIRV_VK;
+}
+
+// Returns -1 for targets that cannot bind an acceleration structure.
+static int acceleration_native_index(Slang::Enum target, int slot) {
+    if (Slang::is_msl(target))
+        return MslAccelerationBufferBase + slot;
+    if (target == Slang::SPIRV_VK)
+        return SpirvAccelerationBindingBase + slot;
+    return -1;
+}
+
+// Ray query needs SPIR-V 1.4 or later. Validate against the version the module
+// declares instead of a fixed environment.
+static spv_target_env spirv_environment(const std::vector<uint32_t> &words, bool vulkan) {
+    const uint32_t version = words.size() > 1 ? words[1] : 0;
+    if (version >= 0x10600)
+        return vulkan ? SPV_ENV_VULKAN_1_3 : SPV_ENV_UNIVERSAL_1_6;
+    if (version >= 0x10500)
+        return vulkan ? SPV_ENV_VULKAN_1_2 : SPV_ENV_UNIVERSAL_1_5;
+    if (version >= 0x10400)
+        return vulkan ? SPV_ENV_VULKAN_1_2 : SPV_ENV_UNIVERSAL_1_4;
+    return vulkan ? SPV_ENV_VULKAN_1_1 : SPV_ENV_UNIVERSAL_1_3;
+}
+
 static void validate_spirv(const std::vector<uint32_t> &words, spv_target_env environment,
                            const std::string &prefix) {
     spvtools::SpirvTools validator(environment);
@@ -138,7 +173,7 @@ static std::vector<uint32_t> read_spirv(const char *path) {
     stream.read(reinterpret_cast<char *>(words.data()), size);
     if (!stream || words[0] != 0x07230203)
         throw std::runtime_error("invalid SPIR-V input");
-    validate_spirv(words, SPV_ENV_UNIVERSAL_1_3, "invalid SPIR-V: ");
+    validate_spirv(words, spirv_environment(words, false), "invalid SPIR-V: ");
     return words;
 }
 
@@ -196,6 +231,7 @@ static void name_resources(Compiler &compiler, const std::string &stage,
     rename(resources.storage_images, false);
     rename(resources.separate_images, false);
     rename(resources.separate_samplers, false);
+    rename(resources.acceleration_structures, false);
     auto name_attributes = [&](const auto &list, const std::string &prefix) {
         for (const auto &resource : list)
             if (compiler.get_name(resource.id).empty())
@@ -476,11 +512,33 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     }
     auto resources = analysis.get_shader_resources();
     if (!resources.push_constant_buffers.empty() || !resources.sampled_images.empty() ||
-        !resources.subpass_inputs.empty() || !resources.acceleration_structures.empty() ||
-        !resources.atomic_counters.empty() || !resources.gl_plain_uniforms.empty() ||
-        !resources.shader_record_buffers.empty())
+        !resources.subpass_inputs.empty() || !resources.atomic_counters.empty() ||
+        !resources.gl_plain_uniforms.empty() || !resources.shader_record_buffers.empty())
         throw std::runtime_error("supported resources are flat uniforms, storage buffers/images, "
-                                 "separate textures and samplers");
+                                 "separate textures, samplers and compute acceleration structures");
+    const bool ray_query = !resources.acceleration_structures.empty();
+    if (ray_query) {
+        if (!compute)
+            throw std::runtime_error(
+                "acceleration structures are only supported in compute shaders");
+        if (!supports_ray_query(target))
+            throw std::runtime_error(std::string(Slang::to_str(target)) +
+                                     ": ray query requires Metal (macOS or iOS) or Vulkan");
+        if (resources.acceleration_structures.size() > MaxAccelerationStructures)
+            throw std::runtime_error("too many acceleration structures");
+        std::set<int> accelerations;
+        for (const auto &resource : resources.acceleration_structures) {
+            const auto found = metadata.find(resource.name);
+            if (found == metadata.end() || found->second.kind != "acceleration_structure")
+                throw std::runtime_error("missing or wrong metadata for resource: " +
+                                         resource.name);
+            if (!analysis.get_type(resource.type_id).array.empty())
+                throw std::runtime_error("resource arrays are not supported: " + resource.name);
+            if (!accelerations.insert(found->second.slot).second)
+                throw std::runtime_error("duplicate acceleration structure slot: " + resource.name);
+            used.insert(resource.name);
+        }
+    }
     auto check_locations = [&](const auto &list, uint32_t limit) {
         std::set<uint32_t> locations;
         for (const auto &resource : list) {
@@ -619,6 +677,13 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         if (!Slang::is_glsl(target))
             assign(resources.separate_images, 1);
         assign(resources.separate_samplers, 2);
+        for (const auto &resource : resources.acceleration_structures) {
+            compiler.set_decoration(
+                resource.id, spv::DecorationBinding,
+                acceleration_native_index(target, metadata.at(resource.name).slot));
+            compiler.set_decoration(resource.id, spv::DecorationDescriptorSet,
+                                    Slang::is_spirv(target) ? 1 : 0);
+        }
     };
     auto patched_spirv = [&]() {
         auto patched = words;
@@ -640,6 +705,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         patch(resources.storage_images);
         patch(resources.separate_images);
         patch(resources.separate_samplers);
+        patch(resources.acceleration_structures);
         return patched;
     };
     if ((target == Slang::GLSL410 || target == Slang::GLSL300ES || target == Slang::HLSL4) &&
@@ -656,7 +722,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         CompilerMSL::Options options;
         options.platform =
             target == Slang::METAL_MACOS ? CompilerMSL::Options::macOS : CompilerMSL::Options::iOS;
-        options.set_msl_version(2, 1);
+        // Metal intersection queries need MSL 2.4.
+        options.set_msl_version(2, ray_query ? 4 : 1);
         // Sokol's Metal backend supports base-vertex and base-instance draws.
         options.ios_support_base_vertex_instance = true;
         options.enable_decoration_binding = true;
@@ -707,7 +774,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         result.source_code = output.Get().wgsl;
     } else if (target == Slang::SPIRV_VK) {
         auto patched = patched_spirv();
-        validate_spirv(patched, SPV_ENV_VULKAN_1_1, "Vulkan SPIR-V validation: ");
+        validate_spirv(patched, spirv_environment(patched, true), "Vulkan SPIR-V validation: ");
         BytecodeBlob blob;
         blob.valid = true;
         blob.snippet_index = index;
@@ -722,6 +789,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     name_resources(reflect, stage_name, metadata);
     CompilerGLSL::Options gl;
     gl.version = 430;
+    // SPIRV-Cross rejects ray query unless it targets Vulkan GLSL 460. This
+    // copy feeds reflection only; no backend consumes its text.
+    if (ray_query) {
+        gl.version = 460;
+        gl.vulkan_semantics = true;
+    }
     gl.emit_uniform_buffer_as_plain_uniforms = true;
     // BindSlot access comes from the validated SPIR-V above. GLSL's optional
     // qualifier deduction narrows write-only uses of a read/write image during
@@ -865,6 +938,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     describe(resources.storage_images, "storage_image", 1);
     describe(resources.separate_images, "texture", 1);
     describe(resources.separate_samplers, "sampler", 2);
+    for (const auto &resource : resources.acceleration_structures)
+        report["bindings"].push_back(
+            {{"name", resource.name},
+             {"kind", "acceleration_structure"},
+             {"slot", metadata.at(resource.name).slot},
+             {"binding", acceleration_native_index(target, metadata.at(resource.name).slot)}});
     if (compute)
         report["workgroup_size"] = result.stage_refl.cs_workgroup_size;
     return result;
@@ -927,10 +1006,27 @@ static Json inspect_words(const std::vector<uint32_t> &words) {
     append(resources.storage_images, "storage_image");
     append(resources.separate_images, "texture");
     append(resources.separate_samplers, "sampler");
+    append(resources.acceleration_structures, "acceleration_structure");
     return output;
 }
 
 Json inspect_spirv(const std::string &path) { return inspect_words(read_spirv(path.c_str())); }
+
+// Sokol's layout has no acceleration structure list, so this adds one. The
+// host binds each structure by slot; native indices let a backend skip a lookup.
+static Json describe_acceleration_structures(const Manifest &manifest) {
+    Json list = Json::array();
+    for (const auto &[name, binding] : manifest.bindings)
+        if (binding.kind == "acceleration_structure")
+            list.push_back(
+                {{"name", name},
+                 {"slot", binding.slot},
+                 {"stage", "SG_SHADERSTAGE_COMPUTE"},
+                 {"msl_buffer_n", acceleration_native_index(Slang::METAL_MACOS, binding.slot)},
+                 {"spirv_set1_binding_n",
+                  acceleration_native_index(Slang::SPIRV_VK, binding.slot)}});
+    return list;
+}
 
 GeneratedProgram generate_program(const Manifest &manifest,
                                   const std::map<std::string, std::string> &options,
@@ -1072,6 +1168,7 @@ GeneratedProgram generate_program(const Manifest &manifest,
         if (reflection.progs.size() != 1)
             throw std::runtime_error("Expected one reflected program");
         artifact->layout = generator.describe_interface(reflection.progs[0]);
+        artifact->layout["acceleration_structures"] = describe_acceleration_structures(manifest);
         for (auto target : targets) {
             for (size_t i = 0; i < stages.size(); ++i) {
                 const auto &source = translated[target].sources[i];
@@ -1092,6 +1189,7 @@ GeneratedProgram generate_program(const Manifest &manifest,
     if (reflection.progs.size() != 1)
         throw std::runtime_error("Expected one reflected program");
     report["layout"] = generator.describe_interface(reflection.progs[0]);
+    report["layout"]["acceleration_structures"] = describe_acceleration_structures(manifest);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
@@ -1145,11 +1243,13 @@ static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
     }
     if (attribute_names.size() != artifact.layout.at("attributes").size())
         throw std::runtime_error("Native and source attribute locations disagree");
-    const std::pair<const char *, const char *> lists[] = {{"uniform_blocks", "uniform"},
-                                                           {"textures", "texture"},
-                                                           {"samplers", "sampler"},
-                                                           {"storage_buffers", "storage_buffer"},
-                                                           {"storage_images", "storage_image"}};
+    const std::pair<const char *, const char *> lists[] = {
+        {"uniform_blocks", "uniform"},
+        {"textures", "texture"},
+        {"samplers", "sampler"},
+        {"storage_buffers", "storage_buffer"},
+        {"storage_images", "storage_image"},
+        {"acceleration_structures", "acceleration_structure"}};
     for (const auto &[list, kind] : lists)
         for (auto &resource : artifact.layout.at(list)) {
             const std::map<std::string, std::string> stage_names = {
@@ -1232,7 +1332,7 @@ static ProgramArtifact compile_backend_impl(const BackendRequest &request) {
     for (const auto &[stage, words] : request.stages) {
         if (words.size() < 5 || words[0] != 0x07230203)
             throw std::runtime_error("Invalid SPIR-V header");
-        validate_spirv(words, SPV_ENV_UNIVERSAL_1_3, "invalid SPIR-V: ");
+        validate_spirv(words, spirv_environment(words, false), "invalid SPIR-V: ");
         auto info = inspect_words(words);
         if (info["entries"].size() != 1 || info["entries"][0]["stage"] != stage)
             throw std::runtime_error("Expected one matching SPIR-V stage entry");

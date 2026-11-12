@@ -37,11 +37,19 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (!overrides.emplace(key, binding.at("slot")).second)
             throw std::runtime_error("duplicate binding override: " + key.first + ":" + key.second);
     }
+    // Sokol has no acceleration structure bind slot, so these get their own
+    // slot space. backend_compile.cc maps each slot to a Metal buffer index and
+    // a Vulkan binding clear of every other resource.
     auto space_for = [](const std::string &kind) {
-        return kind == "uniform" || kind == "sampler" ? kind : "view";
+        return kind == "uniform" || kind == "sampler" ? kind
+               : kind == "acceleration_structure"     ? "acceleration_structure"
+                                                      : "view";
     };
     auto limit_for = [](const std::string &space) {
-        return space == "uniform" ? 8 : space == "sampler" ? 12 : 32;
+        return space == "uniform"                  ? 8
+               : space == "sampler"                ? 12
+               : space == "acceleration_structure" ? 4
+                                                   : 32;
     };
     std::map<std::string, std::set<int>> occupied;
     // Reserve every explicit slot first, even if its resource sorts last.

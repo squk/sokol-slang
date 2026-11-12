@@ -579,16 +579,29 @@ SourceResult compile_source(const SourceRequest &request) {
     for (const auto &path : request.search_paths)
         paths.push_back(path.c_str());
     // Match the CLI's addressing and matrix contract before Sokol translation.
-    slang::CompilerOptionEntry options[3] = {};
+    std::vector<slang::CompilerOptionEntry> options(3);
     options[0].name = slang::CompilerOptionName::VulkanUseEntryPointName;
     options[1].name = slang::CompilerOptionName::VulkanUseGLLayout;
     options[2].name = slang::CompilerOptionName::DebugInformation;
     for (auto &option : options)
         option.value.intValue0 = 1;
+    // Capabilities such as spvRayQueryKHR enable SPIR-V extensions that the
+    // target profile alone does not grant. Slang takes capability IDs, not names.
+    for (const auto &capability : request.capabilities) {
+        const auto id = capability.find('\0') == std::string::npos
+                            ? global->findCapability(capability.c_str())
+                            : SLANG_CAPABILITY_UNKNOWN;
+        if (id == SLANG_CAPABILITY_UNKNOWN)
+            return fail("input", ("Unknown Slang capability: " + capability).c_str());
+        slang::CompilerOptionEntry option = {};
+        option.name = slang::CompilerOptionName::Capability;
+        option.value.intValue0 = static_cast<int32_t>(id);
+        options.push_back(option);
+    }
     slang::SessionDesc desc;
     desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
-    desc.compilerOptionEntries = options;
-    desc.compilerOptionEntryCount = 3;
+    desc.compilerOptionEntries = options.data();
+    desc.compilerOptionEntryCount = static_cast<uint32_t>(options.size());
     desc.fileSystem = files.get();
     desc.targets = &target;
     desc.targetCount = 1;
