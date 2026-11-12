@@ -142,7 +142,14 @@ invalid types, and binding collisions are errors.
 - Ray query: a compute stage may bind up to four `RaytracingAccelerationStructure`
   resources (kind `acceleration_structure`, own slot namespace 0..3). Sokol has
   no slot for them, so the native index is Metal buffer `16 + slot` and Vulkan
-  set 1 binding `44 + slot`; the layout lists both in `acceleration_structures`.
+  set 1 binding `SG_MAX_VIEW_BINDSLOTS + SG_MAX_SAMPLER_BINDSLOTS + slot`.
+  The layout lists each slot in `acceleration_structures` with `name`, `slot`,
+  `stage`, `msl_buffer_n` and `spirv_set1_binding_n`. The emitted
+  `spirv_set1_binding_n` is authoritative: the Vulkan base depends on the
+  `sokol_gfx.h` the compiler was built against, so the runtime must use the
+  emitted number, not derive one. The layout also carries `max_acceleration_slots`,
+  `max_view_bindslots` and `max_sampler_bindslots`; a runtime compares the last
+  two with its own `sokol_gfx.h` and rejects the program on a difference.
   Only Metal (macOS, iOS) and Vulkan targets accept them; any other target in
   `--targets` is an error. Compile Slang with `--profile spirv_1_4` or later and
   `--capability spvRayQueryKHR`. SPIRV-Cross lowers ray query to MSL 2.4.

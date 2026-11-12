@@ -1,4 +1,5 @@
 #include "program_bindings.h"
+#include "bind_limits.h"
 #include <algorithm>
 #include <map>
 #include <stdexcept>
@@ -46,10 +47,10 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
                                                       : "view";
     };
     auto limit_for = [](const std::string &space) {
-        return space == "uniform"                  ? 8
-               : space == "sampler"                ? 12
-               : space == "acceleration_structure" ? 4
-                                                   : 32;
+        return space == "uniform"                  ? kMaxUniformBindslots
+               : space == "sampler"                ? kMaxSamplerBindslots
+               : space == "acceleration_structure" ? kMaxAccelerationSlots
+                                                   : kMaxViewBindslots;
     };
     std::map<std::string, std::set<int>> occupied;
     // Reserve every explicit slot first, even if its resource sorts last.

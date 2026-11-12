@@ -1,4 +1,5 @@
 #include "manifest.h"
+#include "bind_limits.h"
 #include "manifest_schema.h"
 #include <fstream>
 #include <regex>
@@ -149,10 +150,10 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
                                    binding.kind == "acceleration_structure"
                                ? binding.kind
                                : "view";
-        const int limit = binding.kind == "uniform"                  ? 8
-                          : binding.kind == "sampler"                ? 12
-                          : binding.kind == "acceleration_structure" ? 4
-                                                                     : 32;
+        const int limit = binding.kind == "uniform"                  ? kMaxUniformBindslots
+                          : binding.kind == "sampler"                ? kMaxSamplerBindslots
+                          : binding.kind == "acceleration_structure" ? kMaxAccelerationSlots
+                                                                     : kMaxViewBindslots;
         if (binding.slot >= limit)
             throw std::runtime_error(name + ": slot must be in 0.." + std::to_string(limit - 1));
         if (!slots.emplace(space, binding.slot).second)

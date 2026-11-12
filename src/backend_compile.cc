@@ -1,4 +1,5 @@
 #include "backend_internal.h"
+#include "bind_limits.h"
 #include "compiler_stack.h"
 #include "generators/sokolc.h"
 #include "manifest.h"
@@ -26,9 +27,13 @@
 
 using namespace shdc;
 using namespace spirv_cross;
-static_assert(MaxUniformBlocks == SG_MAX_UNIFORMBLOCK_BINDSLOTS);
-static_assert(MaxViews == SG_MAX_VIEW_BINDSLOTS);
-static_assert(MaxSamplers == SG_MAX_SAMPLER_BINDSLOTS);
+static_assert(MaxUniformBlocks == kMaxUniformBindslots,
+              "sokol-shdc uniform block slot limit differs from sokol_gfx.h "
+              "SG_MAX_UNIFORMBLOCK_BINDSLOTS");
+static_assert(MaxViews == kMaxViewBindslots,
+              "sokol-shdc view slot limit differs from sokol_gfx.h SG_MAX_VIEW_BINDSLOTS");
+static_assert(MaxSamplers == kMaxSamplerBindslots,
+              "sokol-shdc sampler slot limit differs from sokol_gfx.h SG_MAX_SAMPLER_BINDSLOTS");
 
 // Reuse Sokol's reflection and C generator without its shader frontend.
 namespace shdc {
@@ -117,11 +122,12 @@ static std::string storage_image_access(const Compiler &compiler, const Resource
 // Sokol has no bind slot for acceleration structures. A manifest slot (0..3)
 // maps to a native index placed clear of every other resource: Metal buffers
 // 0..7 hold uniform blocks and 8..15 storage buffers, so these start at 16;
-// Vulkan set 1 uses bindings 0..31 for views and 32..43 for samplers.
+// Vulkan set 1 uses one binding per view slot, then one per sampler slot, so
+// the base is the view count plus the sampler count of the sokol_gfx.h used here.
+// The layout reports the final numbers per slot; runtimes must use those.
 // Ray query is available only in compute shaders on Metal and Vulkan.
-static constexpr int MaxAccelerationStructures = 4;
 static constexpr int MslAccelerationBufferBase = 16;
-static constexpr int SpirvAccelerationBindingBase = MaxViews + MaxSamplers;
+static constexpr int SpirvAccelerationBindingBase = kMaxViewBindslots + kMaxSamplerBindslots;
 
 static bool supports_ray_query(Slang::Enum target) {
     return target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::SPIRV_VK;
@@ -524,7 +530,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         if (!supports_ray_query(target))
             throw std::runtime_error(std::string(Slang::to_str(target)) +
                                      ": ray query requires Metal (macOS or iOS) or Vulkan");
-        if (resources.acceleration_structures.size() > MaxAccelerationStructures)
+        if (resources.acceleration_structures.size() > kMaxAccelerationSlots)
             throw std::runtime_error("too many acceleration structures");
         std::set<int> accelerations;
         for (const auto &resource : resources.acceleration_structures) {
@@ -1028,6 +1034,15 @@ static Json describe_acceleration_structures(const Manifest &manifest) {
     return list;
 }
 
+// Adds the acceleration structure list and the slot maxima this compiler used.
+// A consumer compares the maxima with its own sokol_gfx.h to catch a mismatch.
+static void add_binding_contract(Json &layout, const Manifest &manifest) {
+    layout["acceleration_structures"] = describe_acceleration_structures(manifest);
+    layout["max_acceleration_slots"] = kMaxAccelerationSlots;
+    layout["max_view_bindslots"] = kMaxViewBindslots;
+    layout["max_sampler_bindslots"] = kMaxSamplerBindslots;
+}
+
 GeneratedProgram generate_program(const Manifest &manifest,
                                   const std::map<std::string, std::string> &options,
                                   const std::filesystem::path &native_work,
@@ -1168,7 +1183,7 @@ GeneratedProgram generate_program(const Manifest &manifest,
         if (reflection.progs.size() != 1)
             throw std::runtime_error("Expected one reflected program");
         artifact->layout = generator.describe_interface(reflection.progs[0]);
-        artifact->layout["acceleration_structures"] = describe_acceleration_structures(manifest);
+        add_binding_contract(artifact->layout, manifest);
         for (auto target : targets) {
             for (size_t i = 0; i < stages.size(); ++i) {
                 const auto &source = translated[target].sources[i];
@@ -1189,7 +1204,7 @@ GeneratedProgram generate_program(const Manifest &manifest,
     if (reflection.progs.size() != 1)
         throw std::runtime_error("Expected one reflected program");
     report["layout"] = generator.describe_interface(reflection.progs[0]);
-    report["layout"]["acceleration_structures"] = describe_acceleration_structures(manifest);
+    add_binding_contract(report["layout"], manifest);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
