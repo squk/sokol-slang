@@ -367,7 +367,15 @@ std::vector<uint32_t> wrap_storage_buffer_elements(std::vector<uint32_t> words) 
     }
     output[3] = bound;
 
-    spvtools::SpirvTools validator(SPV_ENV_UNIVERSAL_1_3);
+    // Validate against the version the module declares. Ray query modules are 1.5.
+    spv_target_env environment = SPV_ENV_UNIVERSAL_1_3;
+    if (output[1] >= 0x00010600u)
+        environment = SPV_ENV_UNIVERSAL_1_6;
+    else if (output[1] >= 0x00010500u)
+        environment = SPV_ENV_UNIVERSAL_1_5;
+    else if (output[1] >= 0x00010400u)
+        environment = SPV_ENV_UNIVERSAL_1_4;
+    spvtools::SpirvTools validator(environment);
     std::string errors;
     validator.SetMessageConsumer(
         [&](spv_message_level_t, const char *, const spv_position_t &, const char *message) {
