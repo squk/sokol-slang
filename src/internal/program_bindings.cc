@@ -1,5 +1,5 @@
-#include "program_bindings.h"
-#include "bind_limits.h"
+#include "internal/program_bindings.h"
+#include "internal/bind_limits.h"
 #include <algorithm>
 #include <map>
 #include <stdexcept>

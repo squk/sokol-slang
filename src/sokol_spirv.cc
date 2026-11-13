@@ -1,5 +1,5 @@
-#include "backend_internal.h"
-#include "program_bindings.h"
+#include "internal/backend_cli.h"
+#include "internal/program_bindings.h"
 #ifdef SOKOL_SLANG_SOURCE_COMPILER
 #include "slang_compile.h"
 #endif

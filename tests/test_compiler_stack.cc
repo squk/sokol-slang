@@ -1,7 +1,7 @@
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
 #endif
-#include "compiler_stack.h"
+#include "internal/compiler_stack.h"
 #include <cstdint>
 #include <future>
 #include <iostream>

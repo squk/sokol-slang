@@ -23,13 +23,19 @@ json_dep = subproject('json').get_variable('json_dep')
 manifest_schema = custom_target('manifest-schema', input: 'schema/manifest.schema.json',
   output: 'manifest_schema.h', command: [python, files('tools/embed_schema.py'), '@INPUT@', '@OUTPUT@'])
 compiler_threads_dep = dependency('threads', native: true)
+# Headers sit beside their sources. Those at the top of src/ are the library's
+# interface: backend_compile.h, manifest.h, slang_compile.h and program_compile.h.
+# Everything in src/internal/ serves the libraries, the sokol-spirv tool and the
+# tests; consumers must not include it. Includes are written from src/.
+src_inc = include_directories('src')
 backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc',
-  'src/compiler_stack.cc', 'src/storage_elements.cc',
-  'src/manifest.cc', 'src/program_bindings.cc', 'src/native_bytecode.cc', manifest_schema,
+  'src/internal/compiler_stack.cc', 'src/internal/storage_elements.cc',
+  'src/manifest.cc', 'src/internal/program_bindings.cc', 'src/internal/native_bytecode.cc', manifest_schema,
+  include_directories: src_inc,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep],
   native: true)
 backend_compiler_dep = declare_dependency(link_with: backend_compiler,
-  include_directories: include_directories('src'),
+  include_directories: src_inc,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep])
 
 
@@ -62,11 +68,11 @@ if get_option('compiler_library') and get_option('slang')
   source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
     dependencies: slang_sdk_dep, native: true)
   source_compiler_dep = declare_dependency(link_with: source_compiler,
-    include_directories: include_directories('src'), dependencies: slang_sdk_dep)
+    include_directories: src_inc, dependencies: slang_sdk_dep)
   program_compiler = static_library('sokol-slang-program', 'src/program_compile.cc',
     dependencies: [source_compiler_dep, backend_compiler_dep], native: true)
   program_compiler_dep = declare_dependency(link_with: program_compiler,
-    include_directories: include_directories('src'),
+    include_directories: src_inc,
     dependencies: [source_compiler_dep, backend_compiler_dep])
 endif
 core_dependencies = [backend_compiler_dep]
@@ -105,8 +111,8 @@ endif
 test('frontend-bindings', python, args: files('tests/test_frontend_bindings.py'))
 
 compiler_stack_test = executable('test-compiler-stack',
-  ['tests/test_compiler_stack.cc', 'src/compiler_stack.cc'],
-  include_directories: include_directories('src'),
+  ['tests/test_compiler_stack.cc', 'src/internal/compiler_stack.cc'],
+  include_directories: src_inc,
   dependencies: compiler_threads_dep, native: true)
 test('compiler-stack', compiler_stack_test, suite: 'compiler-library')
 

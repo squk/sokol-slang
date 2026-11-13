@@ -1,5 +1,5 @@
 #include "manifest.h"
-#include "bind_limits.h"
+#include "internal/bind_limits.h"
 #include "manifest_schema.h"
 #include <fstream>
 #include <regex>
