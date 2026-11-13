@@ -43,7 +43,10 @@ def main():
             shader.write_text(text)
             old = output.read_bytes() if output.exists() else None
             result = subprocess.run(
-                command + list(flags) + list(extra_args), cwd=work, text=True, capture_output=True
+                command + list(flags) + list(extra_args),
+                cwd=work,
+                text=True,
+                capture_output=True,
             )
             if error:
                 assert result.returncode != 0, "invalid shader succeeded"
@@ -110,7 +113,11 @@ def main():
             "duplicate view slot",
         )
         run(source, options + ["--binding", "vertex:params=8"], "slot must be in")
-        run(source, options + ["--sample-type", "tex=depth"], "sample_type does not match")
+        run(
+            source,
+            options + ["--sample-type", "tex=depth"],
+            "sample_type does not match",
+        )
         run(
             source.replace("float scale;", "float scale; float2x2 unsupported;"),
             options,
@@ -118,17 +125,24 @@ def main():
         )
         run(
             source.replace(
-                "float2 position : POSITION;", "[[vk::location(16)]] float2 position : POSITION;"
+                "float2 position : POSITION;",
+                "[[vk::location(16)]] float2 position : POSITION;",
             ).replace(
-                "uint recordIndex : TEXCOORD0;", "[[vk::location(1)]] uint recordIndex : TEXCOORD0;"
+                "uint recordIndex : TEXCOORD0;",
+                "[[vk::location(1)]] uint recordIndex : TEXCOORD0;",
             ),
             options,
             "out-of-range stage location",
         )
-        run(source.replace("return tex.Sample", "syntax_error return tex.Sample"), options, "error")
+        run(
+            source.replace("return tex.Sample", "syntax_error return tex.Sample"),
+            options,
+            "error",
+        )
         (work / "helper.slang").write_text("float proofScale() { return 1.0; }\n")
         imported = "import helper;\n" + source.replace(
-            "input.position * params.scale", "input.position * params.scale * proofScale()"
+            "input.position * params.scale",
+            "input.position * params.scale * proofScale()",
         )
         run(imported, options)
         assert "helper.slang" in depfile.read_text(), depfile.read_text()
@@ -139,10 +153,12 @@ def main():
         assert first != output.read_bytes(), "import edit did not change generated shader"
 
         # Relative textual includes also preserve macros and transitive dependencies.
+        (work / "unused.slang").write_text("// Captured but never loaded.\n")
         (work / "constants.slang").write_text("#define PROOF_SCALE 1.0\n")
         (work / "common.slang").write_text('#include "constants.slang"\n')
         included = '#include "common.slang"\n' + source.replace(
-            "input.position * params.scale", "input.position * params.scale * PROOF_SCALE"
+            "input.position * params.scale",
+            "input.position * params.scale * PROOF_SCALE",
         )
         run(included, options)
         assert "common.slang" in depfile.read_text()
@@ -173,7 +189,10 @@ def main():
             modules / "helper.slang",
         ):
             escaped = str(path).replace("\\", "\\\\").replace(":", "\\:").replace(" ", "\\ ")
-            assert escaped in dependencies, dependencies
+            assert escaped + " " in dependencies or dependencies.endswith(
+                escaped + "\n"
+            ), dependencies
+        assert "unused.slang" not in dependencies, dependencies
         # The joined short form is accepted too; missing dependencies preserve the output.
         run(combined, options, extra_args=["-I" + str(includes), "-I" + str(modules)])
         (includes / "constants.slang").unlink()

@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 #include <slang-com-ptr.h>
 #include <slang.h>
@@ -51,6 +52,8 @@ std::string source_path(const std::string &path) {
     return std::filesystem::path(path).lexically_normal().generic_string();
 }
 
+// SourceFiles serves captured bytes to Slang and records the source keys it loads.
+// Loads may overlap; the dependency snapshot uses the same lock as loadFile.
 class SourceFiles final : public ISlangFileSystem {
   public:
     explicit SourceFiles(std::map<std::string, std::string> files) : files_(std::move(files)) {}
@@ -77,11 +80,19 @@ class SourceFiles final : public ISlangFileSystem {
         return remaining;
     }
     bool contains(const char *path) const { return path && files_.contains(source_path(path)); }
+    std::vector<std::string> loaded_paths() const {
+        const std::lock_guard lock(loaded_mutex_);
+        return {loaded_.begin(), loaded_.end()};
+    }
     SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char *path, ISlangBlob **out) override {
         *out = nullptr;
         const auto found = files_.find(source_path(path));
         if (found == files_.end())
             return SLANG_E_NOT_FOUND;
+        {
+            const std::lock_guard lock(loaded_mutex_);
+            loaded_.insert(found->first);
+        }
         *out = new SourceBlob(found->second);
         return SLANG_OK;
     }
@@ -89,6 +100,8 @@ class SourceFiles final : public ISlangFileSystem {
   private:
     std::atomic<uint32_t> references_{1};
     const std::map<std::string, std::string> files_;
+    mutable std::mutex loaded_mutex_;
+    std::set<std::string> loaded_;
 };
 
 std::string blob_text(ISlangBlob *blob) {
@@ -635,8 +648,6 @@ SourceResult compile_source(const SourceRequest &request) {
         if (entry_names.empty())
             return fail("entry", "Module defines no shader entry points");
     }
-    for (int i = 0; i < module->getDependencyFileCount(); ++i)
-        result.dependency_paths.emplace_back(module->getDependencyFilePath(i));
     std::vector<Slang::ComPtr<slang::IEntryPoint>> entries;
     std::vector<slang::IComponentType *> components{module};
     for (const auto &name : entry_names) {
@@ -693,6 +704,13 @@ SourceResult compile_source(const SourceRequest &request) {
         std::memcpy(stage.spirv.data(), code->getBufferPointer(), code->getBufferSize());
         stages.push_back(std::move(stage));
     }
+    // Slang may report hash-suffixed virtual identities for captured includes.
+    // Build dependencies need the actual source paths loaded by SourceFiles.
+    result.dependency_paths = files->loaded_paths();
+    const auto root_path = source_path(request.source_path);
+    if (std::find(result.dependency_paths.begin(), result.dependency_paths.end(), root_path) ==
+        result.dependency_paths.end())
+        result.dependency_paths.push_back(root_path);
     result.stages = std::move(stages);
     result.succeeded = true;
     return result;
