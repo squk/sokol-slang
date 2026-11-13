@@ -146,14 +146,8 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
                         resource.value("access", "read"),
                         resource.value("format", "")};
         const std::string name = resource["name"];
-        const auto space = binding.kind == "uniform" || binding.kind == "sampler" ||
-                                   binding.kind == "acceleration_structure"
-                               ? binding.kind
-                               : "view";
-        const int limit = binding.kind == "uniform"                  ? kMaxUniformBindslots
-                          : binding.kind == "sampler"                ? kMaxSamplerBindslots
-                          : binding.kind == "acceleration_structure" ? kMaxAccelerationSlots
-                                                                     : kMaxViewBindslots;
+        const auto space = bind_space(binding.kind, binding.stage);
+        const int limit = bind_space_limit(space);
         if (binding.slot >= limit)
             throw std::runtime_error(name + ": slot must be in 0.." + std::to_string(limit - 1));
         if (!slots.emplace(space, binding.slot).second)
@@ -178,9 +172,11 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
             if (!resource.contains("access") || binding.access == "read")
                 throw std::runtime_error(
                     name + ": storage image access must be explicit write or read_write");
-            if (binding.stage != "compute")
-                throw std::runtime_error(name +
-                                         ": Sokol permits storage images only in compute shaders");
+            // Fragment storage images bypass Sokol's compute-only rule through
+            // sokol-utils (sg_make_shader_fragment_storage).
+            if (binding.stage == "vertex")
+                throw std::runtime_error(name + ": storage images are allowed in compute and "
+                                                "fragment shaders, not in vertex shaders");
         }
         if (binding.kind == "acceleration_structure" && binding.stage != "compute")
             throw std::runtime_error(

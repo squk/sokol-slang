@@ -153,6 +153,24 @@ invalid types, and binding collisions are errors.
   Only Metal (macOS, iOS) and Vulkan targets accept them; any other target in
   `--targets` is an error. Compile Slang with `--profile spirv_1_4` or later and
   `--capability spvRayQueryKHR`. SPIRV-Cross lowers ray query to MSL 2.4.
+- Fragment storage images: Sokol allows storage images only in compute
+  shaders, so a fragment stage's storage images (kind `storage_image`, stage
+  `fragment`) use their own slot namespace 0..3 and stay out of the
+  `sg_shader_desc`. The native index is Metal texture `SG_MAX_VIEW_BINDSLOTS +
+  slot` and Vulkan set 1 binding `SG_MAX_VIEW_BINDSLOTS +
+  SG_MAX_SAMPLER_BINDSLOTS + 4 + slot` (after the acceleration structure
+  bindings). The layout lists each slot in `fragment_storage_images` with
+  `name`, `slot`, `stage`, `image_type`, `access_format`, `writeonly`,
+  `msl_texture_n` and `spirv_set1_binding_n`, plus
+  `max_fragment_storage_slots`. As with acceleration structures, the emitted
+  numbers are authoritative. sokol-utils binds them
+  (`sg_make_shader_fragment_storage`, `sg_fragment_storage_bind`). Only Metal
+  and Vulkan targets accept them. Raster-ordered resources
+  (`RasterizerOrderedTexture2D`) become a SPIR-V fragment shader interlock,
+  which SPIRV-Cross lowers to `[[raster_order_group(0)]]` for Metal; the layout
+  then reports `raster_ordered: true`, and the runtime must check
+  `sg_fragment_storage_raster_order_supported`. Vertex stages cannot use
+  storage images.
 - Raster manifests require `clip_depth: "zero_to_one"`; GL output converts to
   negative-one-to-one depth. Use `SV_VulkanVertexID` for raw vertex indices on
   GLES; Slang's `SV_VertexID` requires unsupported `BaseVertex` handling there.

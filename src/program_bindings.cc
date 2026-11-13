@@ -38,20 +38,9 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (!overrides.emplace(key, binding.at("slot")).second)
             throw std::runtime_error("duplicate binding override: " + key.first + ":" + key.second);
     }
-    // Sokol has no acceleration structure bind slot, so these get their own
-    // slot space. backend_compile.cc maps each slot to a Metal buffer index and
-    // a Vulkan binding clear of every other resource.
-    auto space_for = [](const std::string &kind) {
-        return kind == "uniform" || kind == "sampler" ? kind
-               : kind == "acceleration_structure"     ? "acceleration_structure"
-                                                      : "view";
-    };
-    auto limit_for = [](const std::string &space) {
-        return space == "uniform"                  ? kMaxUniformBindslots
-               : space == "sampler"                ? kMaxSamplerBindslots
-               : space == "acceleration_structure" ? kMaxAccelerationSlots
-                                                   : kMaxViewBindslots;
-    };
+    // Sokol has no acceleration structure or fragment storage image bind slot,
+    // so these get their own slot spaces (bind_space). backend_compile.cc maps
+    // each slot to a native index clear of every other resource.
     std::map<std::string, std::set<int>> occupied;
     // Reserve every explicit slot first, even if its resource sorts last.
     for (const auto &resource : discovered) {
@@ -59,10 +48,10 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (found == overrides.end())
             continue;
         used_overrides.insert(found->first);
-        const auto space = space_for(resource.data.at("kind"));
-        if (found->second < 0 || found->second >= limit_for(space))
+        const auto space = bind_space(resource.data.at("kind"), resource.stage);
+        if (found->second < 0 || found->second >= bind_space_limit(space))
             throw std::runtime_error(resource.name + ": slot must be in 0.." +
-                                     std::to_string(limit_for(space) - 1));
+                                     std::to_string(bind_space_limit(space) - 1));
         if (!occupied[space].insert(found->second).second)
             throw std::runtime_error("duplicate " + space +
                                      " slot; Sokol slots are global across stages");
@@ -73,7 +62,7 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         const auto &name = resource.name;
         const auto &stage = resource.stage;
         const std::string kind = resource.data.at("kind");
-        const auto space = space_for(kind);
+        const auto space = bind_space(kind, stage);
         Json policy = policies.value(name, Json::object());
         const std::string field = kind == "texture"   ? "sample_type"
                                   : kind == "sampler" ? "sampler_type"
@@ -104,7 +93,7 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (found == overrides.end()) {
             while (occupied[space].count(slot))
                 ++slot;
-            if (slot == limit_for(space))
+            if (slot == bind_space_limit(space))
                 throw std::runtime_error(name + ": exceeds Sokol " + space + " binding limit");
             occupied[space].insert(slot);
         }

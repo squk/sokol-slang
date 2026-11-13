@@ -117,7 +117,11 @@ def main():
         bad(lambda d: d["resources"][1].update(format="depth"), "allowed enum")
         bad(lambda d: d["resources"][0].update(format="r32ui"), "format is required only")
         bad(lambda d: d["resources"][3].update(access="write"), "storage buffer access")
-        bad(lambda d: d["resources"][1].update(stage="fragment"), "only in compute")
+        bad(lambda d: d["resources"][1].update(stage="vertex"), "not in vertex shaders")
+        bad(
+            lambda d: d["resources"][1].update(stage="fragment", slot=0),
+            "stage is not in this program",
+        )
         bad(lambda d: d["resources"][1].update(slot=7), "duplicate view slot")
         binary.write_bytes(rewrite_spirv(spirv, strip_names=True))
         generate()

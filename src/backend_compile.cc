@@ -142,6 +142,42 @@ static int acceleration_native_index(Slang::Enum target, int slot) {
     return -1;
 }
 
+// Sokol allows storage images only in compute shaders. A fragment storage image
+// has a manifest slot (0..3) of its own and a native index clear of every Sokol
+// view: Metal fragment textures use indices below SG_MAX_VIEW_BINDSLOTS, so
+// these start there (Apple GPUs bind 128 textures per stage); Vulkan set 1
+// places them after the acceleration structure bindings. sokol-utils binds
+// them (sg_make_shader_fragment_storage, sg_fragment_storage_bind) from the
+// layout's fragment_storage_images list.
+static constexpr int MslFragmentStorageTextureBase = kMaxViewBindslots;
+static constexpr int SpirvFragmentStorageBindingBase =
+    SpirvAccelerationBindingBase + kMaxAccelerationSlots;
+
+static bool supports_fragment_storage(Slang::Enum target) {
+    return Slang::is_msl(target) || target == Slang::SPIRV_VK;
+}
+
+// Returns -1 for targets that cannot bind a fragment storage image.
+static int fragment_storage_native_index(Slang::Enum target, int slot) {
+    if (Slang::is_msl(target))
+        return MslFragmentStorageTextureBase + slot;
+    if (target == Slang::SPIRV_VK)
+        return SpirvFragmentStorageBindingBase + slot;
+    return -1;
+}
+
+// Slang lowers RasterizerOrdered* resources to a fragment shader interlock.
+// SPIRV-Cross turns the interlocked resources into [[raster_order_group(0)]]
+// for Metal; Vulkan needs VK_EXT_fragment_shader_interlock at run time.
+static bool uses_interlock(const Compiler &compiler) {
+    for (auto capability : compiler.get_declared_capabilities())
+        if (capability == spv::CapabilityFragmentShaderPixelInterlockEXT ||
+            capability == spv::CapabilityFragmentShaderSampleInterlockEXT ||
+            capability == spv::CapabilityFragmentShaderShadingRateInterlockEXT)
+            return true;
+    return false;
+}
+
 // Ray query needs SPIR-V 1.4 or later. Validate against the version the module
 // declares instead of a fixed environment.
 static spv_target_env spirv_environment(const std::vector<uint32_t> &words, bool vulkan) {
@@ -291,6 +327,7 @@ class SokolGenerator : public gen::SokolCGenerator {
     std::map<std::string, std::string> uniform_paths;
     std::string take_header() { return std::move(content); }
     Json describe_interface(const refl::ProgramReflection &program);
+    Json describe_fragment_storage(const std::vector<refl::StorageImage> &images);
     std::string native_profile(Slang::Enum target, ShaderStage::Enum stage) {
         const char *profile = hlsl_target(target, stage);
         return profile ? profile : "";
@@ -468,6 +505,25 @@ Json SokolGenerator::describe_interface(const refl::ProgramReflection &program) 
     return result;
 }
 
+// Sokol's layout has no fragment storage image list, so this adds one with the
+// same fields as storage_images. Native indices are the ones translate()
+// assigned for Metal and Vulkan.
+Json SokolGenerator::describe_fragment_storage(const std::vector<refl::StorageImage> &images) {
+    Json list = Json::array();
+    for (const auto &image : images)
+        list.push_back(
+            {{"name", image.name},
+             {"slot", image.sokol_slot},
+             {"stage", shader_stage(ShaderStage::Fragment)},
+             {"image_type", image_type(image.type)},
+             {"access_format", storage_pixel_format(image.access_format)},
+             {"writeonly", image.writeonly},
+             {"msl_texture_n", fragment_storage_native_index(Slang::METAL_MACOS, image.sokol_slot)},
+             {"spirv_set1_binding_n",
+              fragment_storage_native_index(Slang::SPIRV_VK, image.sokol_slot)}});
+    return list;
+}
+
 static uint32_t prepare_glsl(CompilerGLSL &compiler) {
     for (const auto &resource : compiler.get_shader_resources().uniform_buffers)
         if (Spirvcross::can_flatten_uniform_block(compiler, resource))
@@ -484,7 +540,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                   const std::map<std::string, Binding> &metadata,
                                   std::set<std::string> &used, Json &report, Slang::Enum target,
                                   Bytecode &bytecode,
-                                  std::map<std::string, std::string> &uniform_paths) {
+                                  std::map<std::string, std::string> &uniform_paths,
+                                  std::vector<refl::StorageImage> &fragment_images) {
     const auto shader_stage = ShaderStage::from_snippet_type(input.snippets[index].type);
     const auto stage_name = ShaderStage::to_str(shader_stage);
     const bool compute = shader_stage == ShaderStage::Compute;
@@ -589,6 +646,14 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                      "or 32-bit scalars/vectors");
     }
     BindSlotMap slots;
+    // Fragment storage images stay out of Sokol's slot map; sokol-utils binds them.
+    struct FragmentStorage {
+        uint32_t id;
+        std::string name;
+        int slot;
+        int qualifier;
+    };
+    std::vector<FragmentStorage> fragment_storage;
     auto add = [&](const auto &list, const std::string &kind, BindSlot::Type type) {
         for (const auto &resource : list) {
             const auto found = metadata.find(resource.name);
@@ -609,9 +674,9 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                         "Sokol permits only read-only storage buffers in vertex shaders");
                 qualifier = readonly ? BindSlot::ReadOnly : 0;
             } else if (kind == "storage_image") {
-                if (!compute)
+                if (shader_stage == ShaderStage::Vertex)
                     throw std::runtime_error(
-                        "Sokol permits storage images only in compute shaders");
+                        "storage images are allowed in compute and fragment shaders only");
                 const auto &image_type = analysis.get_type(resource.type_id);
                 if (image_type.image.ms ||
                     (image_type.image.dim != spv::Dim2D && image_type.image.dim != spv::Dim3D) ||
@@ -626,6 +691,16 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                     throw std::runtime_error("storage image access does not match SPIR-V: " +
                                              resource.name);
                 qualifier = access == "write" ? BindSlot::WriteOnly : 0;
+                if (shader_stage == ShaderStage::Fragment) {
+                    if (!supports_fragment_storage(target))
+                        throw std::runtime_error(
+                            std::string(Slang::to_str(target)) +
+                            ": fragment storage images require Metal or Vulkan");
+                    fragment_storage.push_back(
+                        {resource.id, resource.name, found->second.slot, qualifier});
+                    used.insert(resource.name);
+                    continue;
+                }
             }
             std::string error;
             if (!slots.add(BindSlot(found->second.slot, resource.name, type, qualifier), error))
@@ -690,6 +765,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                 resource.id, spv::DecorationBinding,
                 acceleration_native_index(target, metadata.at(resource.name).slot));
             compiler.set_decoration(resource.id, spv::DecorationDescriptorSet,
+                                    Slang::is_spirv(target) ? 1 : 0);
+        }
+        for (const auto &image : fragment_storage) {
+            compiler.set_decoration(image.id, spv::DecorationBinding,
+                                    fragment_storage_native_index(target, image.slot));
+            compiler.set_decoration(image.id, spv::DecorationDescriptorSet,
                                     Slang::is_spirv(target) ? 1 : 0);
         }
     };
@@ -812,6 +893,27 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     const uint32_t dummy_sampler = prepare_glsl(reflect);
     reflect.compile();
     BindSlotMap reflection_slots = slots;
+    if (!fragment_storage.empty()) {
+        // Sokol's parser needs a view slot for every storage image. Fragment
+        // storage images borrow free view slots above every real view, so the
+        // sequential Metal texture numbers of the real views do not move. They
+        // leave the reflection after parsing, as the dummy sampler below does.
+        int top = -1;
+        for (int i = 0; i < MaxViews; ++i)
+            if (!slots.views[i].empty())
+                top = i;
+        if (top + int(fragment_storage.size()) >= MaxViews)
+            throw std::runtime_error("fragment storage images need free reflection view slots");
+        int slot = top + 1;
+        for (const auto &image : fragment_storage) {
+            std::string error;
+            if (!reflection_slots.add(
+                    BindSlot(slot++, image.name, BindSlot::Type::StorageImage, image.qualifier),
+                    error))
+                throw std::runtime_error(error);
+        }
+        reflection_slots.allocate_backend_slots(shader_stage);
+    }
     if (dummy_sampler) {
         // SPIRV-Cross adds a sampler for samplerless image fetches. Sokol's
         // parser needs a slot for it, though the shader has no such binding.
@@ -833,6 +935,27 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     result.stage_refl = refl::Reflection::parse_snippet_reflection(
         reflect, input.snippets[index], reflection_input, reflection_slots, result.error);
     check(result.error);
+    {
+        auto &images = result.stage_refl.bindings.storage_images;
+        for (const auto &storage : fragment_storage) {
+            const auto found = std::find_if(images.begin(), images.end(), [&](const auto &image) {
+                return image.name == storage.name;
+            });
+            if (found == images.end())
+                throw std::runtime_error(storage.name +
+                                         ": fragment storage image has no reflection");
+            refl::StorageImage image = *found;
+            image.sokol_slot = storage.slot;
+            image.hlsl_register_u_n = -1;
+            image.wgsl_group1_binding_n = -1;
+            image.glsl_binding_n = -1;
+            image.msl_texture_n = fragment_storage_native_index(Slang::METAL_MACOS, storage.slot);
+            image.spirv_set1_binding_n =
+                fragment_storage_native_index(Slang::SPIRV_VK, storage.slot);
+            fragment_images.push_back(image);
+            images.erase(found);
+        }
+    }
     if (dummy_sampler) {
         auto &samplers = result.stage_refl.bindings.samplers;
         samplers.erase(std::remove_if(samplers.begin(), samplers.end(),
@@ -930,6 +1053,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             int native = category == 0   ? slots.find_uniformblock_slang_slot(resource.name, target)
                          : category == 1 ? slots.find_view_slang_slot(resource.name, target)
                                          : slots.find_sampler_slang_slot(resource.name, target);
+            if (binding.kind == "storage_image" && binding.stage == "fragment")
+                native = fragment_storage_native_index(target, binding.slot);
             Json item = {{"name", resource.name},
                          {"kind", kind},
                          {"slot", binding.slot},
@@ -954,6 +1079,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
              {"binding", acceleration_native_index(target, metadata.at(resource.name).slot)}});
     if (compute)
         report["workgroup_size"] = result.stage_refl.cs_workgroup_size;
+    if (shader_stage == ShaderStage::Fragment)
+        report["raster_ordered"] = uses_interlock(analysis);
     return result;
 }
 
@@ -1036,11 +1163,17 @@ static Json describe_acceleration_structures(const Manifest &manifest) {
     return list;
 }
 
-// Adds the acceleration structure list and the slot maxima this compiler used.
-// A consumer compares the maxima with its own sokol_gfx.h to catch a mismatch.
-static void add_binding_contract(Json &layout, const Manifest &manifest) {
+// Adds the lists of resources Sokol has no slot for and the slot maxima this
+// compiler used. A consumer compares the maxima with its own sokol_gfx.h to
+// catch a mismatch. raster_ordered marks a fragment stage with a shader
+// interlock; the runtime must check sg_fragment_storage_raster_order_supported.
+static void add_binding_contract(Json &layout, const Manifest &manifest,
+                                 Json fragment_storage_images, bool raster_ordered) {
     layout["acceleration_structures"] = describe_acceleration_structures(manifest);
     layout["max_acceleration_slots"] = kMaxAccelerationSlots;
+    layout["fragment_storage_images"] = std::move(fragment_storage_images);
+    layout["max_fragment_storage_slots"] = kMaxFragmentStorageSlots;
+    layout["raster_ordered"] = raster_ordered;
     layout["max_view_bindslots"] = kMaxViewBindslots;
     layout["max_sampler_bindslots"] = kMaxSamplerBindslots;
 }
@@ -1136,6 +1269,9 @@ GeneratedProgram generate_program(const Manifest &manifest,
     std::array<Bytecode, Slang::Num> bytecode;
     std::set<std::string> used;
     Json report = {{"version", 1}, {"targets", Json::object()}};
+    // Every target reflects the same fragment storage images; keep the first.
+    std::vector<refl::StorageImage> fragment_images;
+    bool raster_ordered = false;
     std::vector<std::vector<uint32_t>> binaries;
     // Every backend, reflection and Vulkan output sees scalar and vector
     // storage buffer elements as one-member records.
@@ -1149,8 +1285,12 @@ GeneratedProgram generate_program(const Manifest &manifest,
         for (int i = 0; i < int(stages.size()); ++i) {
             const auto &stage = stages[i];
             Json stage_json;
+            std::vector<refl::StorageImage> images;
             sources.push_back(translate(input, i, binaries[i], manifest.bindings, used, stage_json,
-                                        target, bytecode[target], generator.uniform_paths));
+                                        target, bytecode[target], generator.uniform_paths, images));
+            if (fragment_images.empty())
+                fragment_images = std::move(images);
+            raster_ordered = raster_ordered || stage_json.value("raster_ordered", false);
             report["targets"][Slang::to_str(target)][stage] = std::move(stage_json);
         }
         // Upstream Sokol checks location names. Also check types here.
@@ -1185,7 +1325,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
         if (reflection.progs.size() != 1)
             throw std::runtime_error("Expected one reflected program");
         artifact->layout = generator.describe_interface(reflection.progs[0]);
-        add_binding_contract(artifact->layout, manifest);
+        add_binding_contract(artifact->layout, manifest,
+                             generator.describe_fragment_storage(fragment_images), raster_ordered);
         for (auto target : targets) {
             for (size_t i = 0; i < stages.size(); ++i) {
                 const auto &source = translated[target].sources[i];
@@ -1206,7 +1347,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
     if (reflection.progs.size() != 1)
         throw std::runtime_error("Expected one reflected program");
     report["layout"] = generator.describe_interface(reflection.progs[0]);
-    add_binding_contract(report["layout"], manifest);
+    add_binding_contract(report["layout"], manifest,
+                         generator.describe_fragment_storage(fragment_images), raster_ordered);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
@@ -1266,7 +1408,8 @@ static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
         {"samplers", "sampler"},
         {"storage_buffers", "storage_buffer"},
         {"storage_images", "storage_image"},
-        {"acceleration_structures", "acceleration_structure"}};
+        {"acceleration_structures", "acceleration_structure"},
+        {"fragment_storage_images", "storage_image"}};
     for (const auto &[list, kind] : lists)
         for (auto &resource : artifact.layout.at(list)) {
             const std::map<std::string, std::string> stage_names = {
