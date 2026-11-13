@@ -9,7 +9,7 @@ Alpha: APIs may change. Windows/D3D11 and iOS execution are unverified.
 
 ## Build
 
-Requires C++20, Python 3, Meson 1.1+, and Ninja. Tests also use `glslangValidator`.
+Requires C++20, Python 3, Meson 1.3+, and Ninja. Tests also use `glslangValidator`.
 
 ```sh
 meson setup build
@@ -35,7 +35,8 @@ Pass host Metal compiler flags with repeatable `--metal-arg` options, for exampl
 `--metal-arg=-Wno-unused-variable`. The backend API uses `BackendRequest::metal_args`.
 These flags do not affect other targets or source-only output.
 
-[Examples](examples/README.md) · [Docker tests](docs/reference.md#docker) · [Reference](docs/reference.md)
+[Shader authoring](docs/frontend_programs.md) · [Examples](examples/README.md) ·
+[C++ integration](docs/library.md) · [Toolchain reference](docs/reference.md)
 
 ## Formatting
 

@@ -12,7 +12,6 @@ python = import('python').find_installation('python3')
 #   sokol_slang_proj = subproject('sokol-slang')
 #   core = sokol_slang_proj.get_variable('core')
 #   slang_frontend = sokol_slang_proj.get_variable('slang_frontend')
-#   slangc = sokol_slang_proj.get_variable('slangc')
 #
 #   shader_header = custom_target('my-shader',
 #     input: 'shader.slang',
@@ -20,7 +19,6 @@ python = import('python').find_installation('python3')
 #     depfile: 'shader.d',
 #     command: [
 #       python, slang_frontend,
-#       '--slangc', slangc,
 #       '--core', core,
 #       '--input', '@INPUT0@',
 #       '--module', 'meson_example',

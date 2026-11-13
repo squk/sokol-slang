@@ -75,8 +75,9 @@ meson test -C build installed-tools --print-errorlogs
 ```
 
 Installs `sokol-spirv` and, when enabled, the `sokol-slang` CLI. The schema is
-embedded; examples are not installed. The frontend requires Python 3 and an
-external Slang 2026.20 compiler.
+embedded; examples are not installed. The frontend requires Python 3 and the
+Slang 2026.20 shared library from the SDK selected at build time. The frontend
+does not invoke a `slangc` executable.
 
 `installed-tools` stages a temporary install and compiles copied examples outside
 the checkout. Slang SPIR-V replay must produce identical headers and reflection.
@@ -202,33 +203,8 @@ identity, dependency paths and diagnostics. This route and in-process callers us
 the same `compile_source` function. `compile_backend` applies Sokol's shared
 binding rules and returns owned backend code and reflection without C++ headers.
 
-`program_compiler_dep` exports `compile_programs(ProgramRequest)`. Each named
-program selects a compute entry or vertex/fragment pair and supplies backend
-manifest policy. The call compiles their distinct source entries once, then runs
-the existing backend compiler for each selection. `ProgramResult` owns source
-reflection, dependencies, diagnostics and the complete program map. A failure
-returns no partial program map; source success remains distinct from family
-success. The caller owns job scheduling, caching and GPU preparation.
-
-Library requests compile native Metal bytecode on Apple hosts and DXBC on Windows
-by default, matching the CLI. Set `BackendRequest::source_only` or
-`ProgramRequest::source_only` to keep source instead; the frontend-result overload
-also accepts this flag. Native tools use a private directory that the call removes
-on success or failure. No GPU work runs in these calls.
-
-`ProgramArtifact::layout` exports merged attributes, uniform blocks and members,
-texture/sampler pairs, storage resources, fragment outputs and compute workgroup
-sizes. It uses the C-header generator's enum mappings and includes native binding
-indices and uniform flattening. `ProgramArtifact::to_json()` writes format version
-2 with the layout, reflection, stage source/bytecode, entries and native profiles.
-Artifact attributes, uniform blocks, textures, samplers and storage resources
-require `source_name` for source lookup; `name` keeps the backend binding name.
-Attribute source names join raw SPIR-V reflection by remapped location; resource
-source names join original stage descriptors by set and binding. Names must agree
-across backend targets. Fragment outputs and texture/sampler pairs keep their
-existing native names. The CLI reflection report exposes the native layout;
-source-request and manifest schemas remain version 1. GPU creation and pipeline readiness
-remain the caller's work.
+For in-process compilation, captured-source ownership, program sets and artifact
+layout, see [C++ integration](library.md).
 
 The frontend generates metadata from the shader. Mark entry points with
 `[shader("vertex")]`, `[shader("fragment")]`, or `[shader("compute")]`;
@@ -321,8 +297,9 @@ validation layers; readback uses private Sokol handle queries. The
 
 Shader limits:
 
-- One raster or compute program per invocation; fixed compute workgroups with
-  total thread count divisible by 32.
+- Each program selects a vertex/fragment pair or one compute entry. A single
+  invocation may compile a [program set](frontend_programs.md). Compute workgroups
+  are fixed and their total thread count must be divisible by 32.
 - No resource arrays, push constants, or multiple buffers sharing one block type.
 - Uniforms: 32-bit float/int scalars/vectors, float4x4, and arrays of float4,
   int4, or float4x4. Single-member array wrappers work; other nested structs do not.

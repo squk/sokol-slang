@@ -1,5 +1,40 @@
 # Shader inputs and program sets
 
+## Write a shader
+
+Mark each entry point with its stage. A raster program needs a vertex entry and
+a fragment entry; a compute program needs one compute entry. For example,
+`shader.slang` can contain:
+
+```hlsl
+struct Varyings {
+    float4 position : SV_Position;
+    float4 color : COLOR0;
+};
+
+[shader("vertex")]
+Varyings vertexMain(float2 position : POSITION, float4 color : COLOR0) {
+    Varyings output;
+    output.position = float4(position, 0.0, 1.0);
+    output.color = color;
+    return output;
+}
+
+[shader("fragment")]
+float4 fragmentMain(Varyings input) : SV_Target0 {
+    return input.color;
+}
+```
+
+Use zero-to-one clip depth; the compiler adjusts GL output. Resource kinds,
+vertex inputs and buffer layouts come from reflection. See the
+[triangle](../examples/triangle/) for the matching C application and the
+[textured quad](../examples/textured-quad/) for textures, samplers and uniforms.
+The [reference](reference.md#validation-and-limits) lists supported buffer types
+and backend limits.
+
+## Compile and select programs
+
 The frontend discovers `[shader(...)]` entry points through Slang, compiles the
 selected stages to SPIR-V, and submits one request to `sokol-spirv`:
 

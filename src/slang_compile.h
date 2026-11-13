@@ -8,13 +8,27 @@
 
 namespace sokol_slang {
 
+/*
+    Slang source compilation
+    ========================
+    Supply the root source as bytes and capture every include/import in files.
+    source_path identifies the root; it does not ask the compiler to read a file.
+    An empty entry_points list discovers marked entries. Results retain SPIR-V
+    and source metadata after the request session ends. For complete Sokol
+    backend artifacts, use compile_programs from program_compile.h.
+
+    See docs/library.md for capture rules, Meson dependencies and examples.
+*/
+
 // Each call owns a fresh Slang session and captured files. The calling thread
 // reuses its own global session for standard-library startup; globals never
 // cross threads. No Slang pointers or renderer objects cross this boundary.
 struct SourceRequest {
+    // Required module identity and root path. Do not repeat the root in files.
     std::string module_name;
     std::string source_path;
     std::string source;
+    // Empty discovers marked entries; otherwise names must be nonempty and unique.
     std::vector<std::string> entry_points;
     // Search paths address this captured file map, never the host filesystem.
     // The caller keeps the request unchanged until compile_source returns.
@@ -105,6 +119,8 @@ struct SourceResult {
     std::vector<CompilerDiagnostic> diagnostics;
 };
 
+// Synchronous. Check succeeded; compiler failures carry phase/text diagnostics.
+// Fields may contain intermediate data on failure; consume stages on success.
 SourceResult compile_source(const SourceRequest &request);
 
 } // namespace sokol_slang
