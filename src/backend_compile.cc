@@ -643,11 +643,13 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             analysis.has_decoration(output.id, spv::DecorationLocation))
             slots.track_fs_output_location(
                 analysis.get_decoration(output.id, spv::DecorationLocation));
-    // Sokol exposes 32 texture bindings on Metal. Sixteen is the portable
-    // minimum; BindSlot still checks the shared view and sampler limits.
-    const bool metal =
-        target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::METAL_SIM;
-    const size_t texture_limit = metal ? MaxViews : SG_MAX_PORTABLE_TEXTURE_BINDINGS_PER_STAGE;
+    // Native backends can use every Sokol view slot. The portable minimum is
+    // not their maximum; the runtime checks the device's actual stage limits.
+    const bool native_views = target == Slang::METAL_MACOS || target == Slang::METAL_IOS ||
+                              target == Slang::METAL_SIM || target == Slang::SPIRV_VK ||
+                              target == Slang::HLSL5;
+    const size_t texture_limit =
+        native_views ? MaxViews : SG_MAX_PORTABLE_TEXTURE_BINDINGS_PER_STAGE;
     if (resources.uniform_buffers.size() > 8 || resources.storage_buffers.size() > 8 ||
         resources.storage_images.size() > 8 || resources.separate_images.size() > texture_limit ||
         resources.separate_samplers.size() > MaxSamplers)
