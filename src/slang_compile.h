@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <variant>
@@ -24,6 +25,11 @@ struct SourceRequest {
     std::vector<std::string> capabilities;
     // Session macros apply to the root, captured includes and imported modules.
     std::map<std::string, std::string> defines;
+    // Optional. Called on the compiling thread just before each Slang step (global
+    // session, module load, each file Slang reads, link, reflection, each entry
+    // point's code) with a short description, so a caller can log where a slow or
+    // stuck compile is. Must not throw.
+    std::function<void(const std::string &)> progress;
 };
 
 struct StageCode {

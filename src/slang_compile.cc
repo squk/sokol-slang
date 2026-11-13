@@ -56,7 +56,9 @@ std::string source_path(const std::string &path) {
 // Loads may overlap; the dependency snapshot uses the same lock as loadFile.
 class SourceFiles final : public ISlangFileSystem {
   public:
-    explicit SourceFiles(std::map<std::string, std::string> files) : files_(std::move(files)) {}
+    SourceFiles(std::map<std::string, std::string> files,
+                std::function<void(const std::string &)> progress)
+        : files_(std::move(files)), progress_(std::move(progress)) {}
     SLANG_NO_THROW void *SLANG_MCALL castAs(const SlangUUID &id) override {
         if (same_guid(id, ISlangUnknown::getTypeGuid()) ||
             same_guid(id, ISlangCastable::getTypeGuid()) ||
@@ -87,6 +89,9 @@ class SourceFiles final : public ISlangFileSystem {
     SLANG_NO_THROW SlangResult SLANG_MCALL loadFile(const char *path, ISlangBlob **out) override {
         *out = nullptr;
         const auto found = files_.find(source_path(path));
+        if (progress_)
+            progress_(std::string("Slang reads ") + path +
+                      (found == files_.end() ? " (not found)" : ""));
         if (found == files_.end())
             return SLANG_E_NOT_FOUND;
         {
@@ -100,6 +105,7 @@ class SourceFiles final : public ISlangFileSystem {
   private:
     std::atomic<uint32_t> references_{1};
     const std::map<std::string, std::string> files_;
+    const std::function<void(const std::string &)> progress_;
     mutable std::mutex loaded_mutex_;
     std::set<std::string> loaded_;
 };
@@ -576,12 +582,19 @@ SourceResult compile_source(const SourceRequest &request) {
         !captured.emplace(source_path(request.source_path), request.source).second)
         return fail("input", "The root source needs a unique nonempty path");
     Slang::ComPtr<SourceFiles> files;
-    files.attach(new SourceFiles(std::move(captured)));
+    files.attach(new SourceFiles(std::move(captured), request.progress));
+    const auto progress = [&](const std::string &step) {
+        if (request.progress)
+            request.progress(step);
+    };
     // Slang's global session retains the standard library. The SDK requires
     // separate globals for concurrent threads; request sessions stay fresh.
     thread_local Slang::ComPtr<slang::IGlobalSession> global;
-    if (!global && SLANG_FAILED(slang::createGlobalSession(global.writeRef())))
-        return fail("session", "Cannot create Slang global session");
+    if (!global) {
+        progress("Slang creates this thread's global session (loads the standard library)");
+        if (SLANG_FAILED(slang::createGlobalSession(global.writeRef())))
+            return fail("session", "Cannot create Slang global session");
+    }
     result.compiler_identity = global->getBuildTagString();
     slang::TargetDesc target;
     target.format = SLANG_SPIRV;
@@ -623,15 +636,18 @@ SourceResult compile_source(const SourceRequest &request) {
     desc.searchPaths = paths.data();
     desc.searchPathCount = paths.size();
     Slang::ComPtr<slang::ISession> session;
+    progress("Slang creates the compilation session");
     if (SLANG_FAILED(global->createSession(desc, session.writeRef())))
         return fail("session", "Cannot create Slang compilation session");
     Slang::ComPtr<ISlangBlob> messages;
+    progress("Slang loads module " + request.module_name + " (parse, check, import)");
     auto *module = session->loadModuleFromSourceString(request.module_name.c_str(),
                                                        request.source_path.c_str(),
                                                        request.source.c_str(), messages.writeRef());
     diagnostic("load", messages);
     if (!module)
         return result;
+    progress("Slang reads declarations of module " + request.module_name);
     try {
         result.declarations = source_declarations(session.get(), module, *files.get());
     } catch (const std::exception &error) {
@@ -659,6 +675,7 @@ SourceResult compile_source(const SourceRequest &request) {
     }
     Slang::ComPtr<slang::IComponentType> composite;
     messages.setNull();
+    progress("Slang composes module " + request.module_name + " with its entry points");
     auto status = session->createCompositeComponentType(components.data(), components.size(),
                                                         composite.writeRef(), messages.writeRef());
     diagnostic("compose", messages);
@@ -666,10 +683,12 @@ SourceResult compile_source(const SourceRequest &request) {
         return result;
     Slang::ComPtr<slang::IComponentType> linked;
     messages.setNull();
+    progress("Slang links module " + request.module_name);
     status = composite->link(linked.writeRef(), messages.writeRef());
     diagnostic("link", messages);
     if (SLANG_FAILED(status))
         return result;
+    progress("Slang builds the program layout of module " + request.module_name);
     auto *layout = linked->getLayout(0);
     Slang::ComPtr<ISlangBlob> reflection;
     if (!layout || SLANG_FAILED(layout->toJson(reflection.writeRef())))
@@ -679,6 +698,7 @@ SourceResult compile_source(const SourceRequest &request) {
     for (size_t i = 0; i < entry_names.size(); ++i) {
         Slang::ComPtr<ISlangBlob> code;
         messages.setNull();
+        progress("Slang generates SPIR-V for entry " + entry_names[i]);
         status = linked->getEntryPointCode(i, 0, code.writeRef(), messages.writeRef());
         diagnostic("code", messages);
         if (SLANG_FAILED(status))
