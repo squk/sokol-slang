@@ -35,21 +35,93 @@ static_assert(MaxViews == kMaxViewBindslots,
 static_assert(MaxSamplers == kMaxSamplerBindslots,
               "sokol-shdc sampler slot limit differs from sokol_gfx.h SG_MAX_SAMPLER_BINDSLOTS");
 
+// Compiler keeps its parsed module protected; this names it for read-only scans.
+struct ParsedModule : Compiler {
+    using Compiler::ir;
+};
+
+// Base type shared by every scalar inside a type, or Unknown when they differ.
+static SPIRType::BaseType leaf_basetype(const Compiler &compiler, TypeID id) {
+    const auto &type = compiler.get_type(id);
+    if (type.basetype != SPIRType::Struct)
+        return type.basetype;
+    auto basic = SPIRType::Unknown;
+    for (auto member : type.member_types) {
+        const auto leaf = leaf_basetype(compiler, member);
+        if (leaf == SPIRType::Unknown || (basic != SPIRType::Unknown && leaf != basic))
+            return SPIRType::Unknown;
+        basic = leaf;
+    }
+    return basic;
+}
+
+static bool holds_array(const Compiler &compiler, TypeID id) {
+    const auto &type = compiler.get_type(id);
+    if (!type.array.empty())
+        return true;
+    if (type.basetype == SPIRType::Struct)
+        for (auto member : type.member_types)
+            if (holds_array(compiler, member))
+                return true;
+    return false;
+}
+
+// SPIRV-Cross turns each member access of a flattened block into vec4 reads, but
+// throws "Access chains that result in an array can not be flattened" when code
+// forms a pointer to an array, or to a struct holding one, such as an array passed
+// to a function. Such blocks stay plain uniforms. Pointers into the block that
+// leave through copies or calls count as whole loads.
+static bool loads_whole_array(const Compiler &compiler, uint32_t block_variable) {
+    const auto &words = (compiler.*(&ParsedModule::ir)).spirv;
+    std::set<uint32_t> pointers = {block_variable};
+    for (size_t pos = 5; pos < words.size();) {
+        const uint32_t count = words[pos] >> 16, opcode = words[pos] & 0xffff;
+        if (count == 0)
+            break;
+        const uint32_t *op = &words[pos];
+        switch (opcode) {
+        case spv::OpAccessChain:
+        case spv::OpInBoundsAccessChain:
+        case spv::OpPtrAccessChain:
+        case spv::OpCopyObject:
+            if (pointers.count(op[3])) {
+                // SPIRV-Cross also emits each intermediate chain, so a pointer to an
+                // array fails even when a later chain indexes it.
+                if (opcode != spv::OpCopyObject && holds_array(compiler, op[1]))
+                    return true;
+                pointers.insert(op[2]);
+            }
+            break;
+        case spv::OpLoad:
+            if (pointers.count(op[3]) && holds_array(compiler, op[1]))
+                return true;
+            break;
+        case spv::OpCopyMemory:
+        case spv::OpCopyMemorySized:
+            if (pointers.count(op[2]))
+                return true;
+            break;
+        case spv::OpFunctionCall:
+            for (uint32_t i = 4; i < count; ++i)
+                if (pointers.count(op[i]))
+                    return true;
+            break;
+        default:
+            break;
+        }
+        pos += count;
+    }
+    return false;
+}
+
 // Reuse Sokol's reflection and C generator without its shader frontend.
 namespace shdc {
+// Sokol's GL backend uploads a flattened block as one vec4 or ivec4 array, so every
+// scalar in it, struct array elements included, must share float or int.
 bool Spirvcross::can_flatten_uniform_block(const Compiler &compiler, const Resource &resource) {
-    const auto &block = compiler.get_type(resource.base_type_id);
-    auto basic = SPIRType::Unknown;
-    for (auto member : block.member_types) {
-        const auto type = compiler.get_type(member).basetype;
-        if (basic == SPIRType::Unknown) {
-            basic = type;
-            if (type != SPIRType::Float && type != SPIRType::Int)
-                return false;
-        } else if (type != basic)
-            return false;
-    }
-    return true;
+    const auto basic = leaf_basetype(compiler, resource.base_type_id);
+    return (basic == SPIRType::Float || basic == SPIRType::Int) &&
+           !loads_whole_array(compiler, resource.id);
 }
 const SpirvcrossSource *Spirvcross::find_source_by_snippet_index(int index) const {
     for (const auto &source : sources)
@@ -335,6 +407,20 @@ class SokolGenerator : public gen::SokolCGenerator {
     std::string internal_program_prefix, public_program_prefix;
 
   private:
+    // Struct array uniforms have no Sokol uniform type; uniform_desc() reports them as
+    // invalid. translate() allows them on GL only in flattened float blocks.
+    std::string uniform_type(refl::Type::Enum type) override {
+        return type == refl::Type::Struct ? "SG_UNIFORMTYPE_INVALID"
+                                          : gen::SokolCGenerator::uniform_type(type);
+    }
+    std::string flattened_uniform_type(refl::Type::Enum type) override {
+        return type == refl::Type::Struct ? "SG_UNIFORMTYPE_FLOAT4"
+                                          : gen::SokolCGenerator::flattened_uniform_type(type);
+    }
+    // Sokol's version emits only plain uniforms; this one adds struct arrays, whose
+    // fields translate() limited to float4, int4 and float4x4 at std140 offsets.
+    void gen_uniform_block_decl(const gen::GenInput &gen, const refl::UniformBlock &ub) override;
+    void gen_uniform_decl(const gen::GenInput &gen, const refl::Type &uniform);
     ErrMsg end(const gen::GenInput &) override {
         if (!internal_program_prefix.empty()) {
             size_t position = 0;
@@ -356,6 +442,77 @@ class SokolGenerator : public gen::SokolCGenerator {
         return {};
     }
 };
+
+void SokolGenerator::gen_uniform_decl(const gen::GenInput &gen, const refl::Type &uniform) {
+    using T = refl::Type;
+    const std::string count =
+        uniform.array_count ? fmt::format("[{}]", uniform.array_count) : std::string();
+    if (uniform.type == T::Struct) {
+        l_open("struct {{\n");
+        for (const auto &field : uniform.struct_items)
+            gen_uniform_decl(gen, field);
+        l_close("}} {}{};\n", uniform.name, count);
+        return;
+    }
+    const auto custom = gen.inp.ctype_map.find(uniform.type_as_glsl());
+    if (custom != gen.inp.ctype_map.end()) {
+        l("{} {}{};\n", custom->second, uniform.name, count);
+        return;
+    }
+    switch (uniform.type) {
+    case T::Float:
+        l("float {}{};\n", uniform.name, count);
+        break;
+    case T::Float2:
+        l("float {}{}[2];\n", uniform.name, count);
+        break;
+    case T::Float3:
+        l("float {}{}[3];\n", uniform.name, count);
+        break;
+    case T::Float4:
+        l("float {}{}[4];\n", uniform.name, count);
+        break;
+    case T::Int:
+        l("int {}{};\n", uniform.name, count);
+        break;
+    case T::Int2:
+        l("int {}{}[2];\n", uniform.name, count);
+        break;
+    case T::Int3:
+        l("int {}{}[3];\n", uniform.name, count);
+        break;
+    case T::Int4:
+        l("int {}{}[4];\n", uniform.name, count);
+        break;
+    case T::Mat4x4:
+        l("float {}{}[16];\n", uniform.name, count);
+        break;
+    default:
+        throw std::runtime_error(uniform.name + ": unsupported uniform type");
+    }
+}
+
+void SokolGenerator::gen_uniform_block_decl(const gen::GenInput &gen,
+                                            const refl::UniformBlock &ub) {
+    l("#pragma pack(push,1)\n");
+    int offset = 0;
+    l_open("SOKOL_SHDC_ALIGN({}) typedef struct {} {{\n", ub.struct_info.align,
+           struct_name(ub.name));
+    for (const auto &uniform : ub.struct_info.struct_items) {
+        if (uniform.offset > offset) {
+            l("uint8_t _pad_{}[{}];\n", offset, uniform.offset - offset);
+            offset = uniform.offset;
+        }
+        gen_uniform_decl(gen, uniform);
+        // Reflection gives a struct array the size of one element.
+        offset += uniform.type == refl::Type::Struct ? uniform.array_stride * uniform.array_count
+                                                     : uniform.size;
+    }
+    if (offset < roundup(offset, 16))
+        l("uint8_t _pad_{}[{}];\n", offset, roundup(offset, 16) - offset);
+    l_close("}} {};\n", struct_name(ub.name));
+    l("#pragma pack(pop)\n");
+}
 
 Json SokolGenerator::describe_interface(const refl::ProgramReflection &program) {
     Json result = {{"name", program.name},
@@ -442,12 +599,22 @@ Json SokolGenerator::describe_interface(const refl::ProgramReflection &program) 
         for (const auto &member : block.struct_info.struct_items) {
             const auto path = block.inst_name + "." + member.name;
             const auto found = uniform_paths.find(path);
-            item["members"].push_back(
-                {{"name", member.name},
-                 {"offset", member.offset},
-                 {"type", uniform_type(member.type)},
-                 {"array_count", member.array_count},
-                 {"binding_name", found == uniform_paths.end() ? path : found->second}});
+            Json described = {
+                {"name", member.name},
+                {"offset", member.offset},
+                {"type", uniform_type(member.type)},
+                {"array_count", member.array_count},
+                {"binding_name", found == uniform_paths.end() ? path : found->second}};
+            if (member.type == refl::Type::Struct) {
+                // Field offsets are relative to each element, which is array_stride bytes.
+                described["array_stride"] = member.array_stride;
+                described["fields"] = Json::array();
+                for (const auto &field : member.struct_items)
+                    described["fields"].push_back({{"name", field.name},
+                                                   {"offset", field.offset},
+                                                   {"type", uniform_type(field.type)}});
+            }
+            item["members"].push_back(std::move(described));
         }
         result["uniform_blocks"].push_back(std::move(item));
     }
@@ -1008,33 +1175,84 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                 ": integer and unfilterable textures require a nonfiltering sampler (" +
                 sampler->name + ")");
     }
-    // Flatten one-member array wrappers for host packing when their layouts match.
+    // Slang wraps each std140 array in a struct with one `data` array member. Replace the
+    // wrapper with that array so the C struct and Sokol's uniform list name the member as
+    // written; GL lookups keep the real path through uniform_paths.
+    using T = refl::Type;
+    // Sokol uniform arrays hold float4, int4 or float4x4 elements, whose std140 strides
+    // match C. std140 pads float, float2 and float3 array elements to 16 bytes.
+    auto check_array_element = [](const std::string &name, const refl::Type &item) {
+        if (item.type != T::Float4 && item.type != T::Int4 && item.type != T::Mat4x4)
+            throw std::runtime_error(
+                name + ": uniform arrays hold float4, int4 or float4x4 elements only; std140 "
+                       "pads float, float2 and float3 elements to 16 bytes, so pack them into "
+                       "float4 or int4 elements instead");
+        if (item.is_matrix && item.matrix_stride != 16)
+            throw std::runtime_error(name + ": uniform matrices need a 16 byte column stride");
+    };
     for (auto &block : result.stage_refl.bindings.uniform_blocks) {
+        const std::string block_name = block.name;
         for (auto &member : block.struct_info.struct_items) {
-            if (member.type == refl::Type::Struct && member.struct_items.size() == 1) {
+            const std::string name = block_name + "." + member.name;
+            if (member.type == T::Struct && !member.is_array && member.struct_items.size() == 1 &&
+                member.struct_items[0].is_array) {
                 auto array = member.struct_items[0];
-                if (!array.is_array || array.offset != 0 || array.size != member.size)
-                    throw std::runtime_error("unsupported array wrapper layout");
+                const int bytes =
+                    array.type == T::Struct ? array.array_stride * array.array_count : array.size;
+                if (array.offset != 0 || bytes != member.size)
+                    throw std::runtime_error(name + ": array wrapper has padding Sokol cannot "
+                                                    "express");
                 uniform_paths[block.inst_name + "." + member.name] =
                     block.inst_name + "." + member.name + "." + array.name;
                 array.name = member.name;
                 array.offset = member.offset;
                 member = array;
             }
-            if (member.type == refl::Type::Struct)
-                throw std::runtime_error("nested uniform structs are not supported yet");
-            using T = refl::Type;
+            if (member.is_array && member.array_count == 0)
+                throw std::runtime_error(name + ": uniform arrays need a fixed size");
+            if (member.type == T::Struct) {
+                if (!member.is_array)
+                    throw std::runtime_error(name + ": uniform structs are supported only as "
+                                                    "array elements");
+                // Struct arrays map to one C array of structs; each field is a full std140
+                // slot, so the C fields follow each other without padding.
+                int offset = 0;
+                for (const auto &field : member.struct_items) {
+                    const std::string field_name = name + "." + field.name;
+                    if (field.is_array || field.type == T::Struct)
+                        throw std::runtime_error(field_name +
+                                                 ": struct array elements hold "
+                                                 "float4, int4 or float4x4 fields only");
+                    check_array_element(field_name, field);
+                    if (field.offset != offset)
+                        throw std::runtime_error(field_name + ": unexpected std140 offset");
+                    offset += field.size;
+                }
+                if (member.array_stride != offset)
+                    throw std::runtime_error(name + ": unexpected std140 struct array stride");
+                // Sokol's GL backend binds uniforms by name and has no struct uniforms, so
+                // GL reads struct arrays only through a flattened vec4 block.
+                // SokolGenerator::flattened_uniform_type reports such blocks as FLOAT4.
+                if (Slang::is_glsl(target) &&
+                    (!block.flattened || member.struct_items[0].type == T::Int4))
+                    throw std::runtime_error(
+                        name + ": GL needs uniform blocks holding struct arrays to use only "
+                               "float4 and float4x4 members, and to index those arrays instead "
+                               "of copying them whole");
+                continue;
+            }
             const bool scalar_vector = (member.type >= T::Int && member.type <= T::Int4) ||
                                        (member.type >= T::Float && member.type <= T::Float4);
             if (!scalar_vector && member.type != T::Mat4x4)
-                throw std::runtime_error("uniforms support int/float vectors and float4x4 only");
-            if (member.is_array && member.type != T::Float4 && member.type != T::Int4 &&
-                member.type != T::Mat4x4)
-                throw std::runtime_error("uniform arrays support float4, int4 and float4x4 only");
-            if (member.is_array && member.array_stride != (member.type == T::Mat4x4 ? 64 : 16))
-                throw std::runtime_error("unsupported uniform array stride");
+                throw std::runtime_error(name + ": uniforms support int/float vectors and "
+                                                "float4x4 only");
+            if (member.is_array) {
+                check_array_element(name, member);
+                if (member.array_stride != (member.type == T::Mat4x4 ? 64 : 16))
+                    throw std::runtime_error(name + ": unexpected uniform array stride");
+            }
             if (member.is_matrix && member.matrix_stride != 16)
-                throw std::runtime_error("unsupported uniform matrix stride");
+                throw std::runtime_error(name + ": unsupported uniform matrix stride");
         }
     }
     // Verify the generated descriptor uses the emitted backend entry name.
