@@ -189,6 +189,8 @@ if get_option('slang')
   endif
 
   test('compiler-contract', python, args: [files('tests/test_compiler.py'), '--core', core.full_path()], depends: core, timeout: 60)
+  test('resource-names', python, args: [files('tests/test_resource_names.py'), '--core', core.full_path()],
+    depends: core, timeout: 30)
 
   compute_header = custom_target('compute-shader', input: 'tests/fixtures/compute/shader.slang',
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',

@@ -1059,6 +1059,14 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     reflect.set_common_options(gl);
     const uint32_t dummy_sampler = prepare_glsl(reflect);
     reflect.compile();
+    // CompilerGLSL can rename identifiers reserved by GLSL. BindSlotMap uses
+    // the original image and sampler names; only the combined sampler names
+    // must retain their emitted spelling for runtime GLSL uniform lookup.
+    const auto original_resources = analysis.get_shader_resources();
+    for (const auto &image : original_resources.separate_images)
+        reflect.set_name(image.id, analysis.get_name(image.id));
+    for (const auto &sampler : original_resources.separate_samplers)
+        reflect.set_name(sampler.id, analysis.get_name(sampler.id));
     BindSlotMap reflection_slots = slots;
     if (!fragment_storage.empty()) {
         // Sokol's parser needs a view slot for every storage image. Fragment
@@ -1099,6 +1107,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     auto reflection_input = input;
     reflection_input.image_sample_type_tags.clear();
     reflection_input.sampler_type_tags.clear();
+    // Report the image name before Sokol's parser loses it in its error path.
+    for (const auto &image : reflect.get_shader_resources().separate_images)
+        if (reflection_slots.find_view_index(image.name) < 0)
+            throw std::runtime_error("texture binding lookup failed for '" + image.name +
+                                     "' (SPIR-V resource '" + analysis.get_name(image.id) +
+                                     "', stage " + stage_name + ")");
     result.stage_refl = refl::Reflection::parse_snippet_reflection(
         reflect, input.snippets[index], reflection_input, reflection_slots, result.error);
     check(result.error);
