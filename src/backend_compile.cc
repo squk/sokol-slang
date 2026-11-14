@@ -40,6 +40,57 @@ struct ParsedModule : Compiler {
     using Compiler::ir;
 };
 
+// Sokol's parser only knows the shared view namespace. After GLSL analysis,
+// leave fragment storage images out of its variable list and reflect them from
+// the validated module instead. Never emit shader code from this filtered copy.
+struct ReflectionCompiler : CompilerGLSL {
+    using CompilerGLSL::CompilerGLSL;
+    void omit_resource(uint32_t id) {
+        auto &variables = ir.ids_for_type[TypeVariable];
+        variables.erase(std::remove(variables.begin(), variables.end(), ID(id)), variables.end());
+    }
+};
+
+static refl::StoragePixelFormat::Enum reflection_storage_format(const SPIRType &type) {
+    using Format = refl::StoragePixelFormat;
+    switch (type.image.format) {
+    case spv::ImageFormatRgba8:
+        return Format::RGBA8;
+    case spv::ImageFormatRgba8Snorm:
+        return Format::RGBA8SN;
+    case spv::ImageFormatRgba8ui:
+        return Format::RGBA8UI;
+    case spv::ImageFormatRgba8i:
+        return Format::RGBA8SI;
+    case spv::ImageFormatRgba16ui:
+        return Format::RGBA16UI;
+    case spv::ImageFormatRgba16i:
+        return Format::RGBA16SI;
+    case spv::ImageFormatRgba16f:
+        return Format::RGBA16F;
+    case spv::ImageFormatR32ui:
+        return Format::R32UI;
+    case spv::ImageFormatR32i:
+        return Format::R32SI;
+    case spv::ImageFormatR32f:
+        return Format::R32F;
+    case spv::ImageFormatRg32ui:
+        return Format::RG32UI;
+    case spv::ImageFormatRg32i:
+        return Format::RG32SI;
+    case spv::ImageFormatRg32f:
+        return Format::RG32F;
+    case spv::ImageFormatRgba32ui:
+        return Format::RGBA32UI;
+    case spv::ImageFormatRgba32i:
+        return Format::RGBA32SI;
+    case spv::ImageFormatRgba32f:
+        return Format::RGBA32F;
+    default:
+        throw std::runtime_error("unsupported fragment storage image format");
+    }
+}
+
 // Base type shared by every scalar inside a type, or Unknown when they differ.
 static SPIRType::BaseType leaf_basetype(const Compiler &compiler, TypeID id) {
     const auto &type = compiler.get_type(id);
@@ -1041,7 +1092,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
 
     // Sokol detects depth textures and comparison samplers after GLSL analysis.
     // This analysis does not feed backend shader translation.
-    CompilerGLSL reflect(words);
+    ReflectionCompiler reflect(words);
     name_resources(reflect, stage_name, metadata);
     CompilerGLSL::Options gl;
     gl.version = 430;
@@ -1068,26 +1119,19 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     for (const auto &sampler : original_resources.separate_samplers)
         reflect.set_name(sampler.id, analysis.get_name(sampler.id));
     BindSlotMap reflection_slots = slots;
-    if (!fragment_storage.empty()) {
-        // Sokol's parser needs a view slot for every storage image. Fragment
-        // storage images borrow free view slots above every real view, so the
-        // sequential Metal texture numbers of the real views do not move. They
-        // leave the reflection after parsing, as the dummy sampler below does.
-        int top = -1;
-        for (int i = 0; i < MaxViews; ++i)
-            if (!slots.views[i].empty())
-                top = i;
-        if (top + int(fragment_storage.size()) >= MaxViews)
-            throw std::runtime_error("fragment storage images need free reflection view slots");
-        int slot = top + 1;
-        for (const auto &image : fragment_storage) {
-            std::string error;
-            if (!reflection_slots.add(
-                    BindSlot(slot++, image.name, BindSlot::Type::StorageImage, image.qualifier),
-                    error))
-                throw std::runtime_error(error);
-        }
-        reflection_slots.allocate_backend_slots(shader_stage);
+    for (const auto &storage : fragment_storage) {
+        const auto &type = analysis.get_type_from_variable(storage.id);
+        refl::StorageImage image;
+        image.name = storage.name;
+        image.stage = shader_stage;
+        image.sokol_slot = storage.slot;
+        image.type = refl::Reflection::spirtype_to_image_type(type);
+        image.access_format = reflection_storage_format(type);
+        image.writeonly = (storage.qualifier & BindSlot::WriteOnly) != 0;
+        image.msl_texture_n = fragment_storage_native_index(Slang::METAL_MACOS, storage.slot);
+        image.spirv_set1_binding_n = fragment_storage_native_index(Slang::SPIRV_VK, storage.slot);
+        fragment_images.push_back(image);
+        reflect.omit_resource(storage.id);
     }
     if (dummy_sampler) {
         // SPIRV-Cross adds a sampler for samplerless image fetches. Sokol's
@@ -1116,27 +1160,6 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     result.stage_refl = refl::Reflection::parse_snippet_reflection(
         reflect, input.snippets[index], reflection_input, reflection_slots, result.error);
     check(result.error);
-    {
-        auto &images = result.stage_refl.bindings.storage_images;
-        for (const auto &storage : fragment_storage) {
-            const auto found = std::find_if(images.begin(), images.end(), [&](const auto &image) {
-                return image.name == storage.name;
-            });
-            if (found == images.end())
-                throw std::runtime_error(storage.name +
-                                         ": fragment storage image has no reflection");
-            refl::StorageImage image = *found;
-            image.sokol_slot = storage.slot;
-            image.hlsl_register_u_n = -1;
-            image.wgsl_group1_binding_n = -1;
-            image.glsl_binding_n = -1;
-            image.msl_texture_n = fragment_storage_native_index(Slang::METAL_MACOS, storage.slot);
-            image.spirv_set1_binding_n =
-                fragment_storage_native_index(Slang::SPIRV_VK, storage.slot);
-            fragment_images.push_back(image);
-            images.erase(found);
-        }
-    }
     if (dummy_sampler) {
         auto &samplers = result.stage_refl.bindings.samplers;
         samplers.erase(std::remove_if(samplers.begin(), samplers.end(),
