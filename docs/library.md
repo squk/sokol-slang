@@ -108,9 +108,13 @@ private 8 MiB stack and joins before returning; thread setup failures throw
 Library requests compile native Metal bytecode on Apple hosts and DXBC on Windows
 by default, matching the CLI. Set `BackendRequest::source_only` or
 `ProgramRequest::source_only` to keep source instead; the source-result overload
-also accepts this flag. `BackendRequest::metal_args` passes arguments in order to
-the host Metal compiler. Native tools use a private temporary directory removed
-on success or failure. These calls perform no GPU work.
+also accepts this flag. `BackendRequest::metal_args`, `ProgramRequest::metal_args`
+and the source-result overload's final argument pass arguments in order to the
+host Metal compiler. Set `metal_args = {"-w"}` to suppress its warnings while
+keeping errors; the CLI accepts `--metal-arg=-w`. This is opt-in; the default
+keeps the existing unused-constant and uninitialized-variable warning exclusions.
+Native tools use a private temporary directory removed on success or failure.
+These calls perform no GPU work.
 
 ## Read an artifact
 

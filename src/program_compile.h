@@ -34,6 +34,8 @@ struct ProgramRequest {
     std::string targets;
     // Match BackendRequest: native host bytecode by default, source on request.
     bool source_only = false;
+    // Arguments passed in order to the host Metal compiler, e.g. {"-w"} to suppress warnings.
+    std::vector<std::string> metal_args;
 };
 
 struct ProgramResult {
@@ -55,6 +57,7 @@ ProgramResult compile_programs(const ProgramRequest &request);
 ProgramResult compile_programs(SourceResult source,
                                const std::map<std::string, ProgramSelection> &programs,
                                const std::string &targets, const std::string &module_name,
-                               bool source_only = false);
+                               bool source_only = false,
+                               const std::vector<std::string> &metal_args = {});
 
 } // namespace sokol_slang

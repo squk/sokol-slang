@@ -19,9 +19,17 @@ std::vector<std::string> metal_compile_arguments(shdc::Slang::Enum target,
             : "air64-apple-ios13.0-simulator";
     const std::string standard =
         std::string(macos ? "-std=macos-metal2." : "-std=ios-metal2.") + (ray_query ? "4" : "1");
-    // Suppress warnings from generated MSL; compiler errors still reach stderr and fail the call.
-    std::vector<std::string> command{"-target", triple,         standard, "-w",
-                                     "-c",      input.string(), "-o",     object.string()};
+    // SPIRV-Cross can leave unused constants and uninitialized variables in generated MSL.
+    // Callers can suppress all warnings with an explicit -w argument; errors still fail the call.
+    std::vector<std::string> command{"-target",
+                                     triple,
+                                     standard,
+                                     "-Wno-unused-const-variable",
+                                     "-Wno-uninitialized",
+                                     "-c",
+                                     input.string(),
+                                     "-o",
+                                     object.string()};
     command.insert(command.end(), extra.begin(), extra.end());
     if (source.find("[[position, invariant]]") != std::string::npos)
         command.push_back("-fpreserve-invariance");
