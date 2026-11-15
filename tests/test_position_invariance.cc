@@ -96,6 +96,8 @@ static void check_position(bool block) {
     for (auto target : {shdc::Slang::METAL_MACOS, shdc::Slang::METAL_IOS, shdc::Slang::METAL_SIM}) {
         const auto args = metal_compile_arguments(target, source, "input shader.metal",
                                                   "output shader.air", {"-Wno-unused-variable"});
+        require(std::count(args.begin(), args.end(), "-w") == 1,
+                "Generated Metal commands must suppress warnings on every Apple target");
         require(std::count(args.begin(), args.end(), "-fpreserve-invariance") == 1,
                 "The actual native command builder must preserve invariant positions");
         require(args.back() == "-fpreserve-invariance",
@@ -111,6 +113,8 @@ int main() {
         check_position(true);
         const auto compute = metal_compile_arguments(
             shdc::Slang::METAL_MACOS, "kernel void main0() {}", "compute.metal", "compute.air", {});
+        require(std::count(compute.begin(), compute.end(), "-w") == 1,
+                "Generated compute commands must suppress warnings without caller arguments");
         require(std::find(compute.begin(), compute.end(), "-fpreserve-invariance") == compute.end(),
                 "Compute shaders must keep their existing compiler policy");
         return 0;
