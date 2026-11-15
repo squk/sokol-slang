@@ -302,7 +302,10 @@ Shader limits:
   are fixed and their total thread count must be divisible by 32.
 - No resource arrays, push constants, or multiple buffers sharing one block type.
 - Uniforms: 32-bit float/int scalars/vectors, float4x4, and arrays of float4,
-  int4, or float4x4. Single-member array wrappers work; other nested structs do not.
+  int4, or float4x4. Native backends (Metal, Vulkan, D3D and WebGPU) also accept
+  uint scalars/vectors and uint4 arrays; the generated C fields use uint32_t.
+  Sokol's GL upload API has no unsigned uniform types, so GL targets reject them.
+  Single-member array wrappers work; other nested structs do not.
 - Storage buffers: one unsized array of structs or of 32-bit `int`, `uint` or
   `float` scalars/vectors (`StructuredBuffer<float4>`, `RWStructuredBuffer<uint>`,
   `ByteAddressBuffer`, which Slang lowers to `uint`). Before translation the

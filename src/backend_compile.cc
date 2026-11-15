@@ -458,13 +458,18 @@ class SokolGenerator : public gen::SokolCGenerator {
     std::string internal_program_prefix, public_program_prefix;
 
   private:
-    // Struct array uniforms have no Sokol uniform type; uniform_desc() reports them as
-    // invalid. translate() allows them on GL only in flattened float blocks.
+    // Native-only uniform types have no GL upload enum. translate() checks the
+    // target before the descriptor uses these members.
     std::string uniform_type(refl::Type::Enum type) override {
-        return type == refl::Type::Struct ? "SG_UNIFORMTYPE_INVALID"
-                                          : gen::SokolCGenerator::uniform_type(type);
+        // Native backends upload the block as bytes. GL has no unsigned Sokol
+        // uniform upload type, so translate() rejects unsigned blocks for GL.
+        return type == refl::Type::Struct || (type >= refl::Type::UInt && type <= refl::Type::UInt4)
+                   ? "SG_UNIFORMTYPE_INVALID"
+                   : gen::SokolCGenerator::uniform_type(type);
     }
     std::string flattened_uniform_type(refl::Type::Enum type) override {
+        if (type >= refl::Type::UInt && type <= refl::Type::UInt4)
+            return "SG_UNIFORMTYPE_INVALID";
         return type == refl::Type::Struct ? "SG_UNIFORMTYPE_FLOAT4"
                                           : gen::SokolCGenerator::flattened_uniform_type(type);
     }
@@ -534,6 +539,18 @@ void SokolGenerator::gen_uniform_decl(const gen::GenInput &gen, const refl::Type
         break;
     case T::Int4:
         l("int {}{}[4];\n", uniform.name, count);
+        break;
+    case T::UInt:
+        l("uint32_t {}{};\n", uniform.name, count);
+        break;
+    case T::UInt2:
+        l("uint32_t {}{}[2];\n", uniform.name, count);
+        break;
+    case T::UInt3:
+        l("uint32_t {}{}[3];\n", uniform.name, count);
+        break;
+    case T::UInt4:
+        l("uint32_t {}{}[4];\n", uniform.name, count);
         break;
     case T::Mat4x4:
         l("float {}{}[16];\n", uniform.name, count);
@@ -1216,14 +1233,22 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     // wrapper with that array so the C struct and Sokol's uniform list name the member as
     // written; GL lookups keep the real path through uniform_paths.
     using T = refl::Type;
-    // Sokol uniform arrays hold float4, int4 or float4x4 elements, whose std140 strides
+    // Uniform arrays hold float4, int4, uint4 or float4x4 elements, whose std140 strides
     // match C. std140 pads float, float2 and float3 array elements to 16 bytes.
-    auto check_array_element = [](const std::string &name, const refl::Type &item) {
-        if (item.type != T::Float4 && item.type != T::Int4 && item.type != T::Mat4x4)
+    const auto check_unsigned = [target](const std::string &name, const refl::Type &item) {
+        if (item.type >= T::UInt && item.type <= T::UInt4 && Slang::is_glsl(target))
+            throw std::runtime_error(name + ": Sokol GL uniform uploads do not support unsigned "
+                                            "integers; use signed integers for GL targets");
+    };
+    auto check_array_element = [&](const std::string &name, const refl::Type &item) {
+        check_unsigned(name, item);
+        if (item.type != T::Float4 && item.type != T::Int4 && item.type != T::UInt4 &&
+            item.type != T::Mat4x4)
             throw std::runtime_error(
-                name + ": uniform arrays hold float4, int4 or float4x4 elements only; std140 "
-                       "pads float, float2 and float3 elements to 16 bytes, so pack them into "
-                       "float4 or int4 elements instead");
+                name +
+                ": uniform arrays hold float4, int4, uint4 or float4x4 elements only; std140 "
+                "pads float, float2 and float3 elements to 16 bytes, so pack them into "
+                "float4, int4 or uint4 elements instead");
         if (item.is_matrix && item.matrix_stride != 16)
             throw std::runtime_error(name + ": uniform matrices need a 16 byte column stride");
     };
@@ -1259,7 +1284,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                     if (field.is_array || field.type == T::Struct)
                         throw std::runtime_error(field_name +
                                                  ": struct array elements hold "
-                                                 "float4, int4 or float4x4 fields only");
+                                                 "float4, int4, uint4 or float4x4 fields only");
                     check_array_element(field_name, field);
                     if (field.offset != offset)
                         throw std::runtime_error(field_name + ": unexpected std140 offset");
@@ -1278,10 +1303,11 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                "of copying them whole");
                 continue;
             }
-            const bool scalar_vector = (member.type >= T::Int && member.type <= T::Int4) ||
+            check_unsigned(name, member);
+            const bool scalar_vector = (member.type >= T::Int && member.type <= T::UInt4) ||
                                        (member.type >= T::Float && member.type <= T::Float4);
             if (!scalar_vector && member.type != T::Mat4x4)
-                throw std::runtime_error(name + ": uniforms support int/float vectors and "
+                throw std::runtime_error(name + ": uniforms support int/uint/float vectors and "
                                                 "float4x4 only");
             if (member.is_array) {
                 check_array_element(name, member);

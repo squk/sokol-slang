@@ -106,6 +106,27 @@ def main():
                 for binding in stage["bindings"]
             )
         assert "desc.samplers[" not in output.read_text()
+        unsigned_source = (root / "tests/shaders/unsigned_uniforms.slang").read_text()
+        run(
+            unsigned_source,
+            ["--module", "unsigned_uniforms"],
+            extra_args=["--targets", "metal_macos:wgsl:spirv_vk"],
+        )
+        unsigned_header = output.read_text()
+        for field in (
+            "uint32_t scalar;",
+            "uint32_t pair[2];",
+            "uint32_t triple[3];",
+            "uint32_t vector[4];",
+            "uint32_t vectors[2][4];",
+        ):
+            assert field in unsigned_header, field
+        run(
+            unsigned_source,
+            ["--module", "unsigned_uniforms"],
+            "GL uniform uploads do not support unsigned",
+            extra_args=["--targets", "glsl430"],
+        )
         run(source, options)
         run(
             source,
