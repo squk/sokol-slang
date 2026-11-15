@@ -3,6 +3,7 @@
 #include "internal/bind_limits.h"
 #include "internal/compiler_stack.h"
 #include "internal/native_bytecode.h"
+#include "internal/position_invariance.h"
 #include "internal/program_bindings.h"
 #include "internal/storage_elements.h"
 #include "manifest.h"
@@ -780,6 +781,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     const auto shader_stage = ShaderStage::from_snippet_type(input.snippets[index].type);
     const auto stage_name = ShaderStage::to_str(shader_stage);
     const bool compute = shader_stage == ShaderStage::Compute;
+    if (shader_stage == ShaderStage::Vertex)
+        words = sokol_slang::preserve_vertex_position_invariance(std::move(words));
     if (compute &&
         (target == Slang::GLSL410 || target == Slang::GLSL300ES || target == Slang::HLSL4))
         throw std::runtime_error(

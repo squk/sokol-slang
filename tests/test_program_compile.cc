@@ -1,5 +1,6 @@
 #include "program_compile.h"
 #include <algorithm>
+#include <cstring>
 #include <future>
 #include <iostream>
 #include <stdexcept>
@@ -62,6 +63,46 @@ static void check_source_request_isolation() {
             "Second compiler thread lost its request inputs");
 }
 
+static void check_vertex_position_invariance() {
+    ProgramRequest request;
+    request.targets = "metal_macos:spirv_vk";
+    request.source_only = true;
+    request.source.module_name = "position_invariance";
+    request.source.source_path = "position_invariance.slang";
+    request.source.source = R"(
+        [shader("vertex")]
+        float4 vertexMain(uint id : SV_VulkanVertexID) : SV_Position {
+            return float4(float(id) * 0.25, 0.0, 0.0, 1.0);
+        }
+        [shader("fragment")]
+        float4 fragmentMain() : SV_Target0 { return float4(1.0); }
+    )";
+    request.programs["raster"].entries = {{"vertex", "vertexMain"}, {"fragment", "fragmentMain"}};
+    const auto result = compile_programs(request);
+    for (const auto &diagnostic : result.source.diagnostics)
+        std::cerr << diagnostic.phase << ": " << diagnostic.text << '\n';
+    require(result.succeeded, "Position policy must work through the reusable compiler API");
+    bool metal = false, vulkan = false;
+    for (const auto &stage : result.programs.at("raster").stages) {
+        if (stage.stage != "vertex")
+            continue;
+        if (stage.target == "metal_macos") {
+            metal = stage.source.find("gl_Position [[position, invariant]]") != std::string::npos;
+        } else if (stage.target == "spirv_vk") {
+            require(!stage.bytecode.empty() && stage.bytecode.size() % sizeof(uint32_t) == 0,
+                    "Vulkan output must contain complete SPIR-V words");
+            std::vector<uint32_t> words(stage.bytecode.size() / sizeof(uint32_t));
+            std::memcpy(words.data(), stage.bytecode.data(), stage.bytecode.size());
+            for (size_t offset = 5; offset < words.size(); offset += words[offset] >> 16)
+                if ((words[offset] & 0xffff) == 71 && (words[offset] >> 16) == 3 &&
+                    words[offset + 2] == 18)
+                    vulkan = true; // OpDecorate Invariant on this fixture's only builtin output.
+        }
+    }
+    require(metal && vulkan,
+            "Metal source and native Vulkan must share the invariant position policy");
+}
+
 #if defined(__APPLE__)
 static void check_metal_library_output() {
     ProgramRequest request;
@@ -109,6 +150,7 @@ static void check_metal_library_output() {
 int main() {
     try {
         check_source_request_isolation();
+        check_vertex_position_invariance();
 #if defined(__APPLE__)
         check_metal_library_output();
 #endif

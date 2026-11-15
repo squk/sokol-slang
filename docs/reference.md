@@ -273,6 +273,12 @@ WGSL during generation; compiler tests validate GLSL with `glslangValidator`.
 Cross-platform outputs retain Metal/HLSL source when the native compiler cannot
 run on the build OS. Both tools accept `--source` to explicitly emit native
 Metal/HLSL source for inspection; Vulkan always embeds validated SPIR-V.
+Vertex position outputs carry SPIR-V `Invariant`, including positions in interface
+blocks. All backends receive that decoration. Metal bytecode compilation also
+uses `-fpreserve-invariance`, so depth and color passes can share position results.
+Source-only Metal users must set `MTLCompileOptions.preserveInvariance` when they
+compile the emitted `[[position, invariant]]` outputs at runtime.
+
 JSON reports separate source-layout `spirv` reflection from native `bindings` and
 `entry`. Use native binding records for runtime slots.
 

@@ -29,7 +29,7 @@ compiler_threads_dep = dependency('threads', native: true)
 # tests; consumers must not include it. Includes are written from src/.
 src_inc = include_directories('src')
 backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc',
-  'src/internal/compiler_stack.cc', 'src/internal/storage_elements.cc',
+  'src/internal/compiler_stack.cc', 'src/internal/storage_elements.cc', 'src/internal/position_invariance.cc',
   'src/manifest.cc', 'src/internal/program_bindings.cc', 'src/internal/native_bytecode.cc', manifest_schema,
   include_directories: src_inc,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep],
@@ -115,6 +115,10 @@ compiler_stack_test = executable('test-compiler-stack',
   include_directories: src_inc,
   dependencies: compiler_threads_dep, native: true)
 test('compiler-stack', compiler_stack_test, suite: 'compiler-library')
+position_invariance_test = executable('test-position-invariance', 'tests/test_position_invariance.cc',
+  include_directories: src_inc,
+  dependencies: backend_compiler_dep, native: true)
+test('position-invariance', position_invariance_test, suite: 'compiler-library')
 
 if get_option('compiler_library') and get_option('slang')
   program_compile_test = executable('test-program-compile', 'tests/test_program_compile.cc',
