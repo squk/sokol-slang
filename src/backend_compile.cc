@@ -963,14 +963,23 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                               target == Slang::HLSL5;
     const size_t texture_limit =
         native_views ? MaxViews : SG_MAX_PORTABLE_TEXTURE_BINDINGS_PER_STAGE;
-    if (resources.uniform_buffers.size() > 8 || resources.storage_buffers.size() > 8 ||
+    // Metal has 31 buffer indices. Sokol reserves eight each for vertex
+    // buffers and uniform blocks, leaving fifteen for storage buffers.
+    const bool metal =
+        target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::METAL_SIM;
+    const size_t storage_buffer_limit =
+        metal ? 31 - SG_MAX_VERTEXBUFFER_BINDSLOTS - SG_MAX_UNIFORMBLOCK_BINDSLOTS
+              : SG_MAX_PORTABLE_STORAGEBUFFER_BINDINGS_PER_STAGE;
+    if (resources.uniform_buffers.size() > MaxUniformBlocks ||
+        resources.storage_buffers.size() > storage_buffer_limit ||
         resources.storage_images.size() > 8 || resources.separate_images.size() > texture_limit ||
         resources.separate_samplers.size() > MaxSamplers)
         throw std::runtime_error(
             std::string(Slang::to_str(target)) + " " + stage_name +
             ": resource count exceeds stage limits (uniforms " +
             std::to_string(resources.uniform_buffers.size()) + "/8, storage buffers " +
-            std::to_string(resources.storage_buffers.size()) + "/8, storage images " +
+            std::to_string(resources.storage_buffers.size()) + "/" +
+            std::to_string(storage_buffer_limit) + ", storage images " +
             std::to_string(resources.storage_images.size()) + "/8, textures " +
             std::to_string(resources.separate_images.size()) + "/" + std::to_string(texture_limit) +
             ", samplers " + std::to_string(resources.separate_samplers.size()) + "/" +

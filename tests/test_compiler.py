@@ -106,6 +106,22 @@ def main():
                 for binding in stage["bindings"]
             )
         assert "desc.samplers[" not in output.read_text()
+        # Metal can bind more storage buffers than the portable minimum of eight.
+        portable = (root / "tests/fixtures/portable/shader.slang").read_text()
+
+        def buffer_shader(count):
+            declarations = "struct Record { float4 value; };\n" + "\n".join(
+                f"StructuredBuffer<Record> records_{i};" for i in range(count)
+            )
+            value = " + ".join(f"records_{i}[uint(input.position.x)].value" for i in range(count))
+            return declarations + "\n" + portable.replace("tex.Sample(smp, input.uv)", value)
+
+        run(buffer_shader(9), options)
+        metal_stages = json.loads(reflection.read_text())["targets"]["metal_macos"]
+        buffers = [b for b in metal_stages["fragment"]["bindings"] if b["kind"] == "storage_buffer"]
+        assert len(buffers) == 9
+        assert {b["binding"] for b in buffers} == set(range(8, 17))
+        run(buffer_shader(16), options, error="storage buffers 16/15")
         unsigned_source = (root / "tests/shaders/unsigned_uniforms.slang").read_text()
         run(
             unsigned_source,
