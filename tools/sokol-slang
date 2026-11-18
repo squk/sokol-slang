@@ -135,6 +135,12 @@ def escape_dependency(path):
 
 
 def compile_programs(args):
+    direct = [getattr(args, stage) for stage in STAGES if getattr(args, stage)]
+    explicit = [
+        entry for program in args.program if ":" in program for entry in program.split(":")[1:]
+    ]
+    # Reject malformed explicit selections before capturing files or compiling source.
+    selection = select_programs(args, []) if direct or explicit else None
     policies = {}
     for name, value in parse_settings(args.sample_type, SAMPLE_TYPES, "sample type").items():
         policies[name] = dict(sample_type=value)
@@ -165,6 +171,8 @@ def compile_programs(args):
         defines=parse_defines(args.define),
         files=files,
     )
+    if args.optimization != "default":
+        captured["optimization"] = args.optimization
     if args.profile:
         captured["profile"] = args.profile
     if args.capability:
@@ -187,12 +195,10 @@ def compile_programs(args):
                 raise subprocess.CalledProcessError(completed.returncode or 1, completed.args)
             return result
 
-        direct = [getattr(args, stage) for stage in STAGES if getattr(args, stage)]
-        explicit = [entry for p in args.program if ":" in p for entry in p.split(":")[1:]]
         result = compile_entries(list(dict.fromkeys(direct + explicit)))
         version = result["compiler"]
         discovered = [dict(name=s["entry"], stage=s["stage"]) for s in result["stages"]]
-        programs, batch = select_programs(args, discovered)
+        programs, batch = selection or select_programs(args, discovered)
         available = {(s["stage"], s["entry"]): s for s in result["stages"]}
         compiled, requests = {}, []
         for name, program in programs.items():
@@ -372,6 +378,12 @@ def parse_args(argv=None):
         help="Emit native Metal/HLSL source instead of build-time bytecode",
     )
     parser.add_argument("--core", type=Path, help="sokol-spirv executable (auto-detected)")
+    parser.add_argument(
+        "--optimization",
+        choices=("none", "default", "high", "maximal"),
+        default="default",
+        help="Slang source optimization level",
+    )
     parser.add_argument("--reflection", type=Path)
     parser.add_argument("--depfile", type=Path)
     parser.add_argument("--emit-spirv-dir", type=Path)

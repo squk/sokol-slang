@@ -20,6 +20,8 @@ namespace sokol_slang {
     See docs/library.md for capture rules, Meson dependencies and examples.
 */
 
+enum class OptimizationLevel { None, Default, High, Maximal };
+
 // Each call owns a fresh Slang session and captured files. The calling thread
 // reuses its own global session for standard-library startup; globals never
 // cross threads. No Slang pointers or renderer objects cross this boundary.
@@ -35,6 +37,7 @@ struct SourceRequest {
     std::map<std::string, std::string> files;
     std::vector<std::string> search_paths;
     std::string profile = "spirv_1_3";
+    OptimizationLevel optimization = OptimizationLevel::Default;
     // Slang capability names added to the session, such as spvRayQueryKHR.
     std::vector<std::string> capabilities;
     // Session macros apply to the root, captured includes and imported modules.

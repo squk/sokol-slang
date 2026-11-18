@@ -16,9 +16,9 @@ static int compile_source_request(const std::string &input, const std::string &o
     if (!stream)
         throw std::runtime_error("Cannot open source request: " + input);
     const auto document = Json::parse(stream);
-    const std::set<std::string> fields{"version",      "module_name", "source_path",  "source",
-                                       "entry_points", "files",       "search_paths", "profile",
-                                       "defines",      "capabilities"};
+    const std::set<std::string> fields{"version",      "module_name",  "source_path",  "source",
+                                       "entry_points", "files",        "search_paths", "profile",
+                                       "defines",      "capabilities", "optimization"};
     if (!document.is_object() || document.at("version") != 1)
         throw std::runtime_error("Expected source request version 1");
     for (const auto &[name, value] : document.items())
@@ -34,6 +34,16 @@ static int compile_source_request(const std::string &input, const std::string &o
     request.defines = document.value("defines", std::map<std::string, std::string>{});
     request.profile = document.value("profile", request.profile);
     request.capabilities = document.value("capabilities", std::vector<std::string>{});
+    const auto optimization = document.value("optimization", std::string("default"));
+    using Optimization = sokol_slang::OptimizationLevel;
+    if (optimization == "none")
+        request.optimization = Optimization::None;
+    else if (optimization == "high")
+        request.optimization = Optimization::High;
+    else if (optimization == "maximal")
+        request.optimization = Optimization::Maximal;
+    else if (optimization != "default")
+        throw std::runtime_error("Unknown source optimization level: " + optimization);
     auto result = sokol_slang::compile_source(request);
     Json report = {{"version", 1},
                    {"succeeded", result.succeeded},

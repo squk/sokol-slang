@@ -774,8 +774,8 @@ static uint32_t prepare_glsl(CompilerGLSL &compiler) {
 
 static SpirvcrossSource translate(const Input &input, int index, std::vector<uint32_t> words,
                                   const std::map<std::string, Binding> &metadata,
-                                  std::set<std::string> &used, Json &report, Slang::Enum target,
-                                  Bytecode &bytecode,
+                                  std::set<std::string> &used, Json &report, Json &stage_spirv,
+                                  Slang::Enum target, bool last_target, Bytecode &bytecode,
                                   std::map<std::string, std::string> &uniform_paths,
                                   std::vector<refl::StorageImage> &fragment_images) {
     const auto shader_stage = ShaderStage::from_snippet_type(input.snippets[index].type);
@@ -1335,11 +1335,16 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     if (result.stage_refl.entry_point_by_slang(target) != native_entry)
         throw std::runtime_error("backend entry name does not match Sokol's naming rule");
     result.valid = true;
-    CompilerReflection raw(words);
-    name_resources(raw, stage_name, metadata);
-    report = {{"spirv", Json::parse(raw.compile())},
-              {"entry", native_entry},
-              {"bindings", Json::array()}};
+    if (stage_spirv.is_null()) {
+        CompilerReflection raw(words);
+        name_resources(raw, stage_name, metadata);
+        stage_spirv = Json::parse(raw.compile());
+    }
+    report = {{"entry", native_entry}, {"bindings", Json::array()}};
+    if (last_target)
+        report["spirv"] = std::move(stage_spirv);
+    else
+        report["spirv"] = stage_spirv;
     auto describe = [&](const auto &list, const char *kind, int category) {
         for (const auto &resource : list) {
             const auto &binding = metadata.at(resource.name);
@@ -1573,6 +1578,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
             normalize_entry(captured ? captured->at(stage)
                                      : read_spirv(manifest.stage_path(stage).string().c_str()),
                             manifest.document["stages"][stage]["entry"])));
+    // Raw SPIR-V reflection uses the same normalized stage for every target.
+    std::vector<Json> stage_spirv(stages.size());
     for (auto target : targets) {
         auto &sources = translated[target].sources;
         for (int i = 0; i < int(stages.size()); ++i) {
@@ -1580,7 +1587,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
             Json stage_json;
             std::vector<refl::StorageImage> images;
             sources.push_back(translate(input, i, binaries[i], manifest.bindings, used, stage_json,
-                                        target, bytecode[target], generator.uniform_paths, images));
+                                        stage_spirv[i], target, target == targets.back(),
+                                        bytecode[target], generator.uniform_paths, images));
             if (fragment_images.empty())
                 fragment_images = std::move(images);
             raster_ordered = raster_ordered || stage_json.value("raster_ordered", false);

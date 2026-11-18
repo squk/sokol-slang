@@ -78,7 +78,9 @@ Keep the request unchanged until the call returns.
 
 `defines` maps macro names to replacement strings for the root, includes and
 imports. `profile` defaults to `spirv_1_3`; `capabilities` adds Slang capability
-names. The optional `progress` callback runs on the compiling thread and must
+names. `optimization` selects a Slang optimization level and defaults to
+`OptimizationLevel::Default`. Set it to `OptimizationLevel::None` to compare
+compile time and shader output size on the same request. The optional `progress` callback runs on the compiling thread and must
 not throw. Each source call creates a fresh request session and reuses that
 thread's global Slang session for standard-library startup.
 

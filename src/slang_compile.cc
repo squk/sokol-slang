@@ -611,6 +611,24 @@ SourceResult compile_source(const SourceRequest &request) {
     options[2].name = slang::CompilerOptionName::DebugInformation;
     for (auto &option : options)
         option.value.intValue0 = 1;
+    if (request.optimization != OptimizationLevel::Default) {
+        slang::CompilerOptionEntry option = {};
+        option.name = slang::CompilerOptionName::Optimization;
+        switch (request.optimization) {
+        case OptimizationLevel::None:
+            option.value.intValue0 = SLANG_OPTIMIZATION_LEVEL_NONE;
+            break;
+        case OptimizationLevel::High:
+            option.value.intValue0 = SLANG_OPTIMIZATION_LEVEL_HIGH;
+            break;
+        case OptimizationLevel::Maximal:
+            option.value.intValue0 = SLANG_OPTIMIZATION_LEVEL_MAXIMAL;
+            break;
+        default:
+            return fail("input", "Unknown Slang optimization level");
+        }
+        options.push_back(option);
+    }
     // Capabilities such as spvRayQueryKHR enable SPIR-V extensions that the
     // target profile alone does not grant. Slang takes capability IDs, not names.
     for (const auto &capability : request.capabilities) {
