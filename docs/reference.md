@@ -183,6 +183,19 @@ invalid types, and binding collisions are errors.
   then reports `raster_ordered: true`, and the runtime must check
   `sg_fragment_storage_raster_order_supported`. Vertex stages cannot use
   storage images.
+- Bindless texture and sampler tables: unsized arrays (`Texture2D<float4> heap[];`,
+  `SamplerState samplers[];`) use SPIR-V `OpTypeRuntimeArray` and share a
+  program-wide slot namespace 0..3 (kinds `bindless_texture` and
+  `bindless_sampler`). They stay out of Sokol's view and sampler slots. Metal
+  encodes each table as a Tier 2 argument buffer (`spvDescriptor<...>`, MSL 2.4)
+  at buffer `23 + slot` in fragment and compute stages, or `19 + slot` in vertex
+  stages (capping vertex storage buffers at 11). Vulkan places slot `s` in
+  descriptor set `2 + s`, binding `0`. The layout lists each table in
+  `bindless_textures` and `bindless_samplers` with `msl_buffer_n`, `spirv_set_n`
+  and `spirv_binding_n`, plus `max_bindless_slots`. Only Metal and Vulkan
+  targets accept them; Slang needs `--capability spvShaderNonUniform` when
+  indexing with `NonUniformResourceIndex`. sokol-utils binds them through
+  `sg_bindless_table` and `sg_bindless_bind`.
 - Raster manifests require `clip_depth: "zero_to_one"`; GL output converts to
   negative-one-to-one depth. Use `SV_VulkanVertexID` for raw vertex indices on
   GLES; Slang's `SV_VertexID` requires unsupported `BaseVertex` handling there.
@@ -319,7 +332,9 @@ Shader limits:
 - Each program selects a vertex/fragment pair or one compute entry. A single
   invocation may compile a [program set](frontend_programs.md). Compute workgroups
   are fixed and their total thread count must be divisible by 32.
-- No resource arrays, push constants, or multiple buffers sharing one block type.
+- No fixed-size resource arrays, push constants, or multiple buffers sharing one
+  block type. Unsized separate texture and sampler arrays are supported on Metal
+  and Vulkan as bindless tables.
 - Uniforms: 32-bit float/int scalars/vectors, float4x4, and arrays of float4,
   int4, or float4x4. Native backends (Metal, Vulkan, D3D and WebGPU) also accept
   uint scalars/vectors and uint4 arrays; the generated C fields use uint32_t.

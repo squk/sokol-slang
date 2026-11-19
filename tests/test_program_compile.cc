@@ -78,6 +78,7 @@ static void check_vertex_position_invariance() {
         float4 fragmentMain() : SV_Target0 { return float4(1.0); }
     )";
     request.programs["raster"].entries = {{"vertex", "vertexMain"}, {"fragment", "fragmentMain"}};
+    request.programs["raster"].policy = {{"clip_depth", "zero_to_one"}};
     const auto result = compile_programs(request);
     for (const auto &diagnostic : result.source.diagnostics)
         std::cerr << diagnostic.phase << ": " << diagnostic.text << '\n';
@@ -111,7 +112,7 @@ static void check_metal_library_output() {
     request.source.source_path = "native_metal.slang";
     request.source.source = R"(
         [shader("compute")]
-        [numthreads(1, 1, 1)]
+        [numthreads(32, 1, 1)]
         void computeMain(uint3 id : SV_DispatchThreadID) {}
     )";
     request.programs["compute"].entries = {{"compute", "computeMain"}};
@@ -147,10 +148,44 @@ static void check_metal_library_output() {
 }
 #endif
 
+static void check_bindless_program() {
+    ProgramRequest request;
+    request.targets = "metal_macos:spirv_vk";
+    request.source_only = true;
+    request.source.module_name = "bindless_artifact";
+    request.source.source_path = "bindless_artifact.slang";
+    request.source.profile = "spirv_1_5";
+    request.source.capabilities = {"spvShaderNonUniform"};
+    request.source.source = R"(
+        Texture2D<float4> tex_heap[];
+        SamplerState smp_heap[];
+        RWStructuredBuffer<float4> out_buf;
+        [shader("compute")]
+        [numthreads(32, 1, 1)]
+        void computeMain(uint3 id : SV_DispatchThreadID) {
+            out_buf[id.x] = tex_heap[NonUniformResourceIndex(id.x)].SampleLevel(
+                smp_heap[NonUniformResourceIndex(id.x & 1u)], float2(0.5, 0.5), 0.0);
+        }
+    )";
+    request.programs["trace"].entries = {{"compute", "computeMain"}};
+    const auto result = compile_programs(request);
+    for (const auto &diagnostic : result.source.diagnostics)
+        std::cerr << diagnostic.phase << ": " << diagnostic.text << '\n';
+    require(result.succeeded, "Bindless compute program must compile through compile_programs");
+    const auto &layout = result.programs.at("trace").layout;
+    require(layout.at("bindless_textures").size() == 1 &&
+                layout.at("bindless_samplers").size() == 1,
+            "Bindless layout must expose texture and sampler tables");
+    require(layout.at("bindless_textures")[0].at("source_name") == "tex_heap" &&
+                layout.at("bindless_samplers")[0].at("source_name") == "smp_heap",
+            "Bindless layout must preserve source names");
+}
+
 int main() {
     try {
         check_source_request_isolation();
         check_vertex_position_invariance();
+        check_bindless_program();
 #if defined(__APPLE__)
         check_metal_library_output();
 #endif
@@ -161,7 +196,7 @@ int main() {
         request.source.source_path = "family.slang";
         request.source.source = R"(
             [shader("compute")]
-            [numthreads(1, 1, 1)]
+            [numthreads(32, 1, 1)]
             void computeMain(uint3 id : SV_DispatchThreadID) {}
         )";
         request.programs["first"].entries = {{"compute", "computeMain"}};

@@ -156,9 +156,11 @@ Manifest Manifest::from_document(Json document, const std::filesystem::path &inp
             throw std::runtime_error("duplicate SPIR-V descriptor");
         if (!manifest.bindings.emplace(name, binding).second)
             throw std::runtime_error("duplicate public resource name: " + name);
-        if (resource.contains("sample_type") != (binding.kind == "texture"))
+        if (resource.contains("sample_type") !=
+            (binding.kind == "texture" || binding.kind == "bindless_texture"))
             throw std::runtime_error(name + ": sample_type is required only for textures");
-        if (resource.contains("sampler_type") != (binding.kind == "sampler"))
+        if (resource.contains("sampler_type") !=
+            (binding.kind == "sampler" || binding.kind == "bindless_sampler"))
             throw std::runtime_error(name + ": sampler_type is required only for samplers");
         if (resource.contains("access") && binding.kind != "storage_buffer" &&
             binding.kind != "storage_image")

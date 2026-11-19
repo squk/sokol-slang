@@ -41,6 +41,10 @@ struct ParsedModule : Compiler {
     using Compiler::ir;
 };
 
+static bool is_runtime_array(const SPIRType &type) {
+    return type.array.size() == 1 && type.array[0] == 0 && type.array_size_literal[0];
+}
+
 // Sokol's parser only knows the shared view namespace. After GLSL analysis,
 // leave fragment storage images out of its variable list and reflect them from
 // the validated module instead. Never emit shader code from this filtered copy.
@@ -308,6 +312,46 @@ static int fragment_storage_native_index(Slang::Enum target, int slot) {
     return -1;
 }
 
+// Bindless texture and sampler tables use SPIR-V runtime-sized arrays
+// (OpTypeRuntimeArray) in a program-wide slot namespace (0..3):
+// - Metal fragment and compute buffers 0..7 hold uniform blocks and 8..22 hold
+//   storage buffers (compute acceleration structures use 16..19), so bindless
+//   argument buffers use 23..26.
+// - Metal vertex buffers 23..30 hold vertex attributes, so vertex bindless
+//   argument buffers use 19..22 and cap vertex storage buffers at 11 (8..18).
+// - Vulkan places slot s in descriptor set (2 + s), binding 0, clear of set 0
+//   (uniform blocks) and set 1 (views, samplers, accel, fragment storage).
+static constexpr int MslBindlessBufferBase = 23;
+static constexpr int MslVertexBindlessBufferBase = 19;
+static constexpr int SpirvBindlessSetBase = 2;
+
+static bool supports_bindless(Slang::Enum target) {
+    return Slang::is_msl(target) || target == Slang::SPIRV_VK;
+}
+
+static int bindless_msl_buffer_index(ShaderStage::Enum stage, int slot) {
+    return (stage == ShaderStage::Vertex ? MslVertexBindlessBufferBase : MslBindlessBufferBase) +
+           slot;
+}
+
+static int bindless_spirv_set_index(int slot) { return SpirvBindlessSetBase + slot; }
+
+struct ReflectedBindlessTexture {
+    std::string name;
+    ShaderStage::Enum stage;
+    int slot;
+    refl::ImageType::Enum type;
+    refl::ImageSampleType::Enum sample_type;
+    bool multisampled;
+};
+
+struct ReflectedBindlessSampler {
+    std::string name;
+    ShaderStage::Enum stage;
+    int slot;
+    refl::SamplerType::Enum type;
+};
+
 // Slang lowers RasterizerOrdered* resources to a fragment shader interlock.
 // SPIRV-Cross turns the interlocked resources into [[raster_order_group(0)]]
 // for Metal; Vulkan needs VK_EXT_fragment_shader_interlock at run time.
@@ -316,6 +360,14 @@ static bool uses_interlock(const Compiler &compiler) {
         if (capability == spv::CapabilityFragmentShaderPixelInterlockEXT ||
             capability == spv::CapabilityFragmentShaderSampleInterlockEXT ||
             capability == spv::CapabilityFragmentShaderShadingRateInterlockEXT)
+            return true;
+    return false;
+}
+
+static bool uses_vulkan_glsl_capabilities(const Compiler &compiler) {
+    for (auto capability : compiler.get_declared_capabilities())
+        if (capability == spv::CapabilityShaderNonUniform ||
+            capability == spv::CapabilityRuntimeDescriptorArray)
             return true;
     return false;
 }
@@ -470,6 +522,8 @@ class SokolGenerator : public gen::SokolCGenerator {
     std::string take_header() { return std::move(content); }
     Json describe_interface(const refl::ProgramReflection &program);
     Json describe_fragment_storage(const std::vector<refl::StorageImage> &images);
+    Json describe_bindless_textures(const std::vector<ReflectedBindlessTexture> &textures);
+    Json describe_bindless_samplers(const std::vector<ReflectedBindlessSampler> &samplers);
     std::string native_profile(Slang::Enum target, ShaderStage::Enum stage) {
         const char *profile = hlsl_target(target, stage);
         return profile ? profile : "";
@@ -778,10 +832,51 @@ Json SokolGenerator::describe_fragment_storage(const std::vector<refl::StorageIm
     return list;
 }
 
-static uint32_t prepare_glsl(CompilerGLSL &compiler) {
+Json SokolGenerator::describe_bindless_textures(
+    const std::vector<ReflectedBindlessTexture> &textures) {
+    Json list = Json::array();
+    for (const auto &texture : textures)
+        list.push_back({{"name", texture.name},
+                        {"slot", texture.slot},
+                        {"stage", shader_stage(texture.stage)},
+                        {"image_type", image_type(texture.type)},
+                        {"sample_type", image_sample_type(texture.sample_type)},
+                        {"multisampled", texture.multisampled},
+                        {"msl_buffer_n", bindless_msl_buffer_index(texture.stage, texture.slot)},
+                        {"spirv_set_n", bindless_spirv_set_index(texture.slot)},
+                        {"spirv_binding_n", 0}});
+    return list;
+}
+
+Json SokolGenerator::describe_bindless_samplers(
+    const std::vector<ReflectedBindlessSampler> &samplers) {
+    Json list = Json::array();
+    for (const auto &sampler : samplers)
+        list.push_back({{"name", sampler.name},
+                        {"slot", sampler.slot},
+                        {"stage", shader_stage(sampler.stage)},
+                        {"sampler_type", sampler_type(sampler.type)},
+                        {"msl_buffer_n", bindless_msl_buffer_index(sampler.stage, sampler.slot)},
+                        {"spirv_set_n", bindless_spirv_set_index(sampler.slot)},
+                        {"spirv_binding_n", 0}});
+    return list;
+}
+
+// Reads texture and sampler use from SPIR-V so frontend callers need only
+// supply policies, such as float filterability, that shader code cannot state.
+class ResourceInspector : public Compiler {
+  public:
+    using Compiler::Compiler;
+    void inspect_sampling() { analyze_image_and_sampler_usage(); }
+    bool uses_comparison(uint32_t id) const { return comparison_ids.count(id) != 0; }
+};
+
+static uint32_t prepare_glsl(CompilerGLSL &compiler, bool combine_image_samplers = true) {
     for (const auto &resource : compiler.get_shader_resources().uniform_buffers)
         if (Spirvcross::can_flatten_uniform_block(compiler, resource))
             compiler.flatten_buffer_block(resource.id);
+    if (!combine_image_samplers)
+        return 0;
     const uint32_t dummy_sampler = compiler.build_dummy_sampler_for_combined_images();
     compiler.build_combined_image_samplers();
     for (const auto &pair : compiler.get_combined_image_samplers())
@@ -795,7 +890,9 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                   std::set<std::string> &used, Json &report, Json &stage_spirv,
                                   Slang::Enum target, bool last_target, Bytecode &bytecode,
                                   std::map<std::string, std::string> &uniform_paths,
-                                  std::vector<refl::StorageImage> &fragment_images) {
+                                  std::vector<refl::StorageImage> &fragment_images,
+                                  std::vector<ReflectedBindlessTexture> &bindless_textures,
+                                  std::vector<ReflectedBindlessSampler> &bindless_samplers) {
     const auto shader_stage = ShaderStage::from_snippet_type(input.snippets[index].type);
     const auto stage_name = ShaderStage::to_str(shader_stage);
     const bool compute = shader_stage == ShaderStage::Compute;
@@ -902,21 +999,57 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                      "or 32-bit scalars/vectors");
     }
     BindSlotMap slots;
-    // Fragment storage images stay out of Sokol's slot map; sokol-utils binds them.
+    // Fragment storage images and bindless tables stay out of Sokol's slot map;
+    // sokol-utils binds them from the layout lists.
     struct FragmentStorage {
         uint32_t id;
         std::string name;
         int slot;
         int qualifier;
     };
+    struct BindlessResource {
+        uint32_t id;
+        uint32_t type_id;
+        std::string name;
+        std::string kind;
+        int slot;
+    };
     std::vector<FragmentStorage> fragment_storage;
+    std::vector<BindlessResource> bindless_resources;
+    std::set<int> bindless_slots;
+    size_t bindless_texture_count = 0;
+    size_t bindless_sampler_count = 0;
     auto add = [&](const auto &list, const std::string &kind, BindSlot::Type type) {
         for (const auto &resource : list) {
+            const auto &resource_type = analysis.get_type(resource.type_id);
+            if (is_runtime_array(resource_type)) {
+                if (kind != "texture" && kind != "sampler")
+                    throw std::runtime_error("resource arrays are not supported: " + resource.name);
+                const std::string expected_kind =
+                    kind == "texture" ? "bindless_texture" : "bindless_sampler";
+                const auto found = metadata.find(resource.name);
+                if (found == metadata.end() || found->second.kind != expected_kind)
+                    throw std::runtime_error("missing or wrong metadata for resource: " +
+                                             resource.name);
+                if (!supports_bindless(target))
+                    throw std::runtime_error(std::string(Slang::to_str(target)) +
+                                             ": bindless tables require Metal or Vulkan");
+                if (!bindless_slots.insert(found->second.slot).second)
+                    throw std::runtime_error("duplicate bindless slot: " + resource.name);
+                bindless_resources.push_back({resource.id, resource.type_id, resource.name,
+                                              expected_kind, found->second.slot});
+                if (expected_kind == "bindless_texture")
+                    ++bindless_texture_count;
+                else
+                    ++bindless_sampler_count;
+                used.insert(resource.name);
+                continue;
+            }
             const auto found = metadata.find(resource.name);
             if (found == metadata.end() || found->second.kind != kind)
                 throw std::runtime_error("missing or wrong metadata for resource: " +
                                          resource.name);
-            if (!analysis.get_type(resource.type_id).array.empty())
+            if (!resource_type.array.empty())
                 throw std::runtime_error("resource arrays are not supported: " + resource.name);
             int qualifier = 0;
             if (kind == "storage_buffer") {
@@ -969,6 +1102,9 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     add(resources.storage_images, "storage_image", BindSlot::Type::StorageImage);
     add(resources.separate_images, "texture", BindSlot::Type::Texture);
     add(resources.separate_samplers, "sampler", BindSlot::Type::Sampler);
+    const bool has_bindless = !bindless_resources.empty();
+    if (bindless_resources.size() > kMaxBindlessSlots)
+        throw std::runtime_error("too many bindless tables");
     for (const auto &output : resources.stage_outputs)
         if (shader_stage == ShaderStage::Fragment &&
             analysis.has_decoration(output.id, spv::DecorationLocation))
@@ -982,16 +1118,20 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     const size_t texture_limit =
         native_views ? MaxViews : SG_MAX_PORTABLE_TEXTURE_BINDINGS_PER_STAGE;
     // Metal has 31 buffer indices. Sokol reserves eight each for vertex
-    // buffers and uniform blocks, leaving fifteen for storage buffers.
+    // buffers and uniform blocks, leaving fifteen for storage buffers (eleven
+    // in a vertex stage that also binds bindless argument buffers at 19..22).
     const bool metal =
         target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::METAL_SIM;
     const size_t storage_buffer_limit =
-        metal ? 31 - SG_MAX_VERTEXBUFFER_BINDSLOTS - SG_MAX_UNIFORMBLOCK_BINDSLOTS
+        metal ? 31 - SG_MAX_VERTEXBUFFER_BINDSLOTS - SG_MAX_UNIFORMBLOCK_BINDSLOTS -
+                    (shader_stage == ShaderStage::Vertex && has_bindless ? kMaxBindlessSlots : 0)
               : SG_MAX_PORTABLE_STORAGEBUFFER_BINDINGS_PER_STAGE;
+    const size_t regular_textures = resources.separate_images.size() - bindless_texture_count;
+    const size_t regular_samplers = resources.separate_samplers.size() - bindless_sampler_count;
     if (resources.uniform_buffers.size() > MaxUniformBlocks ||
         resources.storage_buffers.size() > storage_buffer_limit ||
-        resources.storage_images.size() > 8 || resources.separate_images.size() > texture_limit ||
-        resources.separate_samplers.size() > MaxSamplers)
+        resources.storage_images.size() > 8 || regular_textures > texture_limit ||
+        regular_samplers > MaxSamplers)
         throw std::runtime_error(
             std::string(Slang::to_str(target)) + " " + stage_name +
             ": resource count exceeds stage limits (uniforms " +
@@ -999,9 +1139,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             std::to_string(resources.storage_buffers.size()) + "/" +
             std::to_string(storage_buffer_limit) + ", storage images " +
             std::to_string(resources.storage_images.size()) + "/8, textures " +
-            std::to_string(resources.separate_images.size()) + "/" + std::to_string(texture_limit) +
-            ", samplers " + std::to_string(resources.separate_samplers.size()) + "/" +
-            std::to_string(MaxSamplers) + ")");
+            std::to_string(regular_textures) + "/" + std::to_string(texture_limit) + ", samplers " +
+            std::to_string(regular_samplers) + "/" + std::to_string(MaxSamplers) + ")");
     slots.allocate_backend_slots(shader_stage);
     auto remap = [&](Compiler &compiler) {
         auto assign = [&](const auto &list, int category) {
@@ -1037,6 +1176,17 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                     fragment_storage_native_index(target, image.slot));
             compiler.set_decoration(image.id, spv::DecorationDescriptorSet,
                                     Slang::is_spirv(target) ? 1 : 0);
+        }
+        for (const auto &bindless : bindless_resources) {
+            if (Slang::is_msl(target)) {
+                compiler.set_decoration(bindless.id, spv::DecorationBinding,
+                                        bindless_msl_buffer_index(shader_stage, bindless.slot));
+                compiler.set_decoration(bindless.id, spv::DecorationDescriptorSet, 0);
+            } else if (Slang::is_spirv(target)) {
+                compiler.set_decoration(bindless.id, spv::DecorationBinding, 0);
+                compiler.set_decoration(bindless.id, spv::DecorationDescriptorSet,
+                                        bindless_spirv_set_index(bindless.slot));
+            }
         }
     };
     auto patched_spirv = [&]() {
@@ -1076,9 +1226,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         CompilerMSL::Options options;
         options.platform =
             target == Slang::METAL_MACOS ? CompilerMSL::Options::macOS : CompilerMSL::Options::iOS;
-        // Ray queries and unsigned 64-bit atomic buffer min/max need MSL 2.4.
-        // Other programs retain MSL 2.1, including unused atomic declarations.
-        options.set_msl_version(2, ray_query || analysis.uses_uint64_atomic_minmax() ? 4 : 1);
+        // Ray queries, bindless descriptor arrays, and unsigned 64-bit atomic
+        // buffer min/max need MSL 2.4. Other programs retain MSL 2.1.
+        options.set_msl_version(
+            2, ray_query || has_bindless || analysis.uses_uint64_atomic_minmax() ? 4 : 1);
+        if (has_bindless)
+            options.argument_buffers_tier = CompilerMSL::Options::ArgumentBuffersTier::Tier2;
         // Sokol's Metal backend supports base-vertex and base-instance draws.
         options.ios_support_base_vertex_instance = true;
         options.enable_decoration_binding = true;
@@ -1144,9 +1297,11 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     name_resources(reflect, stage_name, metadata);
     CompilerGLSL::Options gl;
     gl.version = 430;
-    // SPIRV-Cross rejects ray query unless it targets Vulkan GLSL 460. This
-    // copy feeds reflection only; no backend consumes its text.
-    if (ray_query) {
+    // SPIRV-Cross rejects ray query, runtime descriptor arrays and non-uniform
+    // indexing unless it targets Vulkan GLSL 460. Shared Slang modules can emit
+    // CapabilityShaderNonUniform in stages that do not touch the bindless table.
+    // This copy feeds reflection only; no backend consumes its text.
+    if (ray_query || has_bindless || uses_vulkan_glsl_capabilities(reflect)) {
         gl.version = 460;
         gl.vulkan_semantics = true;
     }
@@ -1156,7 +1311,10 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     // compile(), which would make reflection disagree with those same slots.
     gl.enable_storage_image_qualifier_deduction = false;
     reflect.set_common_options(gl);
-    const uint32_t dummy_sampler = prepare_glsl(reflect);
+    // Bindless programs run only on Metal and Vulkan, which never consume GL
+    // combined image/sampler pairs; skipping pair construction keeps omitted
+    // bindless images out of combined sampler pairs.
+    const uint32_t dummy_sampler = prepare_glsl(reflect, !has_bindless);
     reflect.compile();
     // CompilerGLSL can rename identifiers reserved by GLSL. BindSlotMap uses
     // the original image and sampler names; only the combined sampler names
@@ -1180,6 +1338,49 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         image.spirv_set1_binding_n = fragment_storage_native_index(Slang::SPIRV_VK, storage.slot);
         fragment_images.push_back(image);
         reflect.omit_resource(storage.id);
+    }
+    if (has_bindless) {
+        ResourceInspector inspector(words);
+        inspector.inspect_sampling();
+        for (const auto &bindless : bindless_resources) {
+            if (bindless.kind == "bindless_texture") {
+                const auto &type = analysis.get_type(bindless.type_id);
+                const auto image_type = refl::Reflection::spirtype_to_image_type(type);
+                if (image_type == refl::ImageType::INVALID)
+                    throw std::runtime_error(bindless.name +
+                                             ": unsupported bindless texture dimension");
+                const auto scalar = analysis.get_type(type.image.type).basetype;
+                auto sample_type = (type.image.depth || inspector.uses_comparison(bindless.id))
+                                       ? refl::ImageSampleType::DEPTH
+                                   : scalar == SPIRType::Int  ? refl::ImageSampleType::SINT
+                                   : scalar == SPIRType::UInt ? refl::ImageSampleType::UINT
+                                                              : refl::ImageSampleType::FLOAT;
+                if (const auto *tag = input.find_image_sample_type_tag(bindless.name)) {
+                    using T = refl::ImageSampleType;
+                    if (tag->type != sample_type &&
+                        !(sample_type == T::FLOAT && tag->type == T::UNFILTERABLE_FLOAT))
+                        throw std::runtime_error(
+                            bindless.name + ": sample_type does not match SPIR-V texture type");
+                    sample_type = tag->type;
+                }
+                bindless_textures.push_back({bindless.name, shader_stage, bindless.slot, image_type,
+                                             sample_type, type.image.ms});
+            } else {
+                auto sampler_type = inspector.uses_comparison(bindless.id)
+                                        ? refl::SamplerType::COMPARISON
+                                        : refl::SamplerType::FILTERING;
+                if (const auto *tag = input.find_sampler_type_tag(bindless.name)) {
+                    using T = refl::SamplerType;
+                    if ((sampler_type == T::COMPARISON) != (tag->type == T::COMPARISON))
+                        throw std::runtime_error(
+                            bindless.name + ": sampler_type does not match SPIR-V comparison use");
+                    sampler_type = tag->type;
+                }
+                bindless_samplers.push_back(
+                    {bindless.name, shader_stage, bindless.slot, sampler_type});
+            }
+            reflect.omit_resource(bindless.id);
+        }
     }
     if (dummy_sampler) {
         // SPIRV-Cross adds a sampler for samplerless image fetches. Sokol's
@@ -1372,10 +1573,20 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                                          : slots.find_sampler_slang_slot(resource.name, target);
             if (binding.kind == "storage_image" && binding.stage == "fragment")
                 native = fragment_storage_native_index(target, binding.slot);
-            Json item = {{"name", resource.name},
-                         {"kind", kind},
-                         {"slot", binding.slot},
-                         {"binding", native}};
+            if (binding.kind == "bindless_texture" || binding.kind == "bindless_sampler")
+                native = Slang::is_msl(target)
+                             ? bindless_msl_buffer_index(shader_stage, binding.slot)
+                             : 0;
+            Json item = {
+                {"name", resource.name},
+                {"kind", binding.kind == "bindless_texture" || binding.kind == "bindless_sampler"
+                             ? binding.kind
+                             : std::string(kind)},
+                {"slot", binding.slot},
+                {"binding", native}};
+            if (Slang::is_spirv(target) &&
+                (binding.kind == "bindless_texture" || binding.kind == "bindless_sampler"))
+                item["set"] = bindless_spirv_set_index(binding.slot);
             if (binding.kind == "storage_buffer" || binding.kind == "storage_image")
                 item["access"] = binding.access;
             if (binding.kind == "storage_image")
@@ -1401,15 +1612,6 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     return result;
 }
 
-// Reads texture and sampler use from SPIR-V so frontend callers need only
-// supply policies, such as float filterability, that shader code cannot state.
-class ResourceInspector : public Compiler {
-  public:
-    using Compiler::Compiler;
-    void inspect_sampling() { analyze_image_and_sampler_usage(); }
-    bool uses_comparison(uint32_t id) const { return comparison_ids.count(id) != 0; }
-};
-
 static Json inspect_words(const std::vector<uint32_t> &words) {
     ResourceInspector compiler(words);
     compiler.inspect_sampling();
@@ -1422,15 +1624,26 @@ static Json inspect_words(const std::vector<uint32_t> &words) {
                        : entry.execution_model == spv::ExecutionModelGLCompute ? "compute"
                                                                                : "unsupported"}});
     auto resources = compiler.get_shader_resources();
-    auto append = [&](const auto &list, const char *kind) {
+    auto append = [&](const auto &list, const char *base_kind) {
         for (const auto &resource : list) {
+            const auto &type = compiler.get_type(resource.type_id);
+            std::string kind = base_kind;
+            if (is_runtime_array(type)) {
+                if (kind == "texture")
+                    kind = "bindless_texture";
+                else if (kind == "sampler")
+                    kind = "bindless_sampler";
+                else
+                    throw std::runtime_error("runtime-sized resource arrays are only supported for "
+                                             "separate textures and samplers");
+            }
             Json binding = {
                 {"name", compiler.get_name(resource.id)},
                 {"set", compiler.get_decoration(resource.id, spv::DecorationDescriptorSet)},
                 {"binding", compiler.get_decoration(resource.id, spv::DecorationBinding)},
                 {"kind", kind}};
-            if (std::string(kind) == "texture") {
-                const auto &image = compiler.get_type(resource.type_id).image;
+            if (kind == "texture" || kind == "bindless_texture") {
+                const auto &image = type.image;
                 const auto scalar = compiler.get_type(image.type).basetype;
                 binding["sample_type"] = image.depth || compiler.uses_comparison(resource.id)
                                              ? "depth"
@@ -1438,17 +1651,17 @@ static Json inspect_words(const std::vector<uint32_t> &words) {
                                          : scalar == SPIRType::UInt ? "uint"
                                                                     : "float";
             }
-            if (std::string(kind) == "sampler")
+            if (kind == "sampler" || kind == "bindless_sampler")
                 binding["sampler_type"] =
                     compiler.uses_comparison(resource.id) ? "comparison" : "filtering";
-            if (std::string(kind) == "storage_buffer")
+            if (kind == "storage_buffer")
                 binding["access"] =
                     compiler.get_buffer_block_flags(resource.id).get(spv::DecorationNonWritable)
                         ? "read"
                         : "read_write";
-            if (std::string(kind) == "storage_image") {
+            if (kind == "storage_image") {
                 binding["access"] = storage_image_access(compiler, resource);
-                binding["format"] = storage_image_format(compiler.get_type(resource.type_id));
+                binding["format"] = storage_image_format(type);
             }
             output["resources"].push_back(binding);
         }
@@ -1485,11 +1698,15 @@ static Json describe_acceleration_structures(const Manifest &manifest) {
 // catch a mismatch. raster_ordered marks a fragment stage with a shader
 // interlock; the runtime must check sg_fragment_storage_raster_order_supported.
 static void add_binding_contract(Json &layout, const Manifest &manifest,
-                                 Json fragment_storage_images, bool raster_ordered) {
+                                 Json fragment_storage_images, Json bindless_textures,
+                                 Json bindless_samplers, bool raster_ordered) {
     layout["acceleration_structures"] = describe_acceleration_structures(manifest);
     layout["max_acceleration_slots"] = kMaxAccelerationSlots;
     layout["fragment_storage_images"] = std::move(fragment_storage_images);
     layout["max_fragment_storage_slots"] = kMaxFragmentStorageSlots;
+    layout["bindless_textures"] = std::move(bindless_textures);
+    layout["bindless_samplers"] = std::move(bindless_samplers);
+    layout["max_bindless_slots"] = kMaxBindlessSlots;
     layout["raster_ordered"] = raster_ordered;
     layout["max_view_bindslots"] = kMaxViewBindslots;
     layout["max_sampler_bindslots"] = kMaxSamplerBindslots;
@@ -1531,10 +1748,10 @@ GeneratedProgram generate_program(const Manifest &manifest,
                                            : Program::from_vs_fs(program_name, "vs", "fs", 0);
     for (const auto &resource : manifest.document["resources"]) {
         const std::string name = resource["name"];
-        if (resource["kind"] == "texture")
+        if (resource["kind"] == "texture" || resource["kind"] == "bindless_texture")
             input.image_sample_type_tags[name] = ImageSampleTypeTag(
                 name, refl::ImageSampleType::from_str(resource["sample_type"]), 0);
-        if (resource["kind"] == "sampler")
+        if (resource["kind"] == "sampler" || resource["kind"] == "bindless_sampler")
             input.sampler_type_tags[name] =
                 SamplerTypeTag(name, refl::SamplerType::from_str(resource["sampler_type"]), 0);
     }
@@ -1586,8 +1803,11 @@ GeneratedProgram generate_program(const Manifest &manifest,
     std::array<Bytecode, Slang::Num> bytecode;
     std::set<std::string> used;
     Json report = {{"version", 1}, {"targets", Json::object()}};
-    // Every target reflects the same fragment storage images; keep the first.
+    // Every target reflects the same fragment storage and bindless lists; keep
+    // the first target's stage reflections.
     std::vector<refl::StorageImage> fragment_images;
+    std::vector<ReflectedBindlessTexture> bindless_textures;
+    std::vector<ReflectedBindlessSampler> bindless_samplers;
     bool raster_ordered = false;
     std::vector<std::vector<uint32_t>> binaries;
     // Every backend, reflection and Vulkan output sees scalar and vector
@@ -1605,11 +1825,19 @@ GeneratedProgram generate_program(const Manifest &manifest,
             const auto &stage = stages[i];
             Json stage_json;
             std::vector<refl::StorageImage> images;
+            std::vector<ReflectedBindlessTexture> stage_bindless_textures;
+            std::vector<ReflectedBindlessSampler> stage_bindless_samplers;
             sources.push_back(translate(input, i, binaries[i], manifest.bindings, used, stage_json,
                                         stage_spirv[i], target, target == targets.back(),
-                                        bytecode[target], generator.uniform_paths, images));
-            if (fragment_images.empty())
-                fragment_images = std::move(images);
+                                        bytecode[target], generator.uniform_paths, images,
+                                        stage_bindless_textures, stage_bindless_samplers));
+            if (target == targets.front()) {
+                fragment_images.insert(fragment_images.end(), images.begin(), images.end());
+                bindless_textures.insert(bindless_textures.end(), stage_bindless_textures.begin(),
+                                         stage_bindless_textures.end());
+                bindless_samplers.insert(bindless_samplers.end(), stage_bindless_samplers.begin(),
+                                         stage_bindless_samplers.end());
+            }
             raster_ordered = raster_ordered || stage_json.value("raster_ordered", false);
             report["targets"][Slang::to_str(target)][stage] = std::move(stage_json);
         }
@@ -1645,8 +1873,10 @@ GeneratedProgram generate_program(const Manifest &manifest,
         if (reflection.progs.size() != 1)
             throw std::runtime_error("Expected one reflected program");
         artifact->layout = generator.describe_interface(reflection.progs[0]);
-        add_binding_contract(artifact->layout, manifest,
-                             generator.describe_fragment_storage(fragment_images), raster_ordered);
+        add_binding_contract(
+            artifact->layout, manifest, generator.describe_fragment_storage(fragment_images),
+            generator.describe_bindless_textures(bindless_textures),
+            generator.describe_bindless_samplers(bindless_samplers), raster_ordered);
         for (auto target : targets) {
             for (size_t i = 0; i < stages.size(); ++i) {
                 const auto &source = translated[target].sources[i];
@@ -1668,7 +1898,9 @@ GeneratedProgram generate_program(const Manifest &manifest,
         throw std::runtime_error("Expected one reflected program");
     report["layout"] = generator.describe_interface(reflection.progs[0]);
     add_binding_contract(report["layout"], manifest,
-                         generator.describe_fragment_storage(fragment_images), raster_ordered);
+                         generator.describe_fragment_storage(fragment_images),
+                         generator.describe_bindless_textures(bindless_textures),
+                         generator.describe_bindless_samplers(bindless_samplers), raster_ordered);
     gen::GenInput generation(args, input, translated, bytecode, reflection);
     if (batch) {
         generator.internal_program_prefix = input.module + "_" + program_name + "_";
@@ -1729,7 +1961,9 @@ static void source_names(ProgramArtifact &artifact, const Manifest &manifest,
         {"storage_buffers", "storage_buffer"},
         {"storage_images", "storage_image"},
         {"acceleration_structures", "acceleration_structure"},
-        {"fragment_storage_images", "storage_image"}};
+        {"fragment_storage_images", "storage_image"},
+        {"bindless_textures", "bindless_texture"},
+        {"bindless_samplers", "bindless_sampler"}};
     for (const auto &[list, kind] : lists)
         for (auto &resource : artifact.layout.at(list)) {
             const std::map<std::string, std::string> stage_names = {

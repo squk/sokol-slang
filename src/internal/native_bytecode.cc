@@ -12,7 +12,8 @@ std::vector<std::string> metal_compile_arguments(shdc::Slang::Enum target,
     // SPIRV-Cross emits these tokens only for programs that need Metal 2.4
     // (macOS 12, iOS 15). Other programs retain the Metal 2.1 target.
     const bool metal24 = source.find("metal_raytracing") != std::string::npos ||
-                         source.find("atomic_ulong") != std::string::npos;
+                         source.find("atomic_ulong") != std::string::npos ||
+                         source.find("spvDescriptor") != std::string::npos;
     const std::string triple =
         macos ? (metal24 ? "air64-apple-macos12.0" : "air64-apple-macos10.14")
         : target == shdc::Slang::METAL_IOS

@@ -243,6 +243,9 @@ if get_option('slang')
   test('fragment-storage-views', python,
     args: [files('tests/test_fragment_storage_views.py'), '--core', core.full_path()],
     depends: core, timeout: 30)
+  test('bindless-contract', python,
+    args: [files('tests/test_bindless.py'), '--core', core.full_path()],
+    depends: core, timeout: 60)
 
   compute_header = custom_target('compute-shader', input: 'tests/fixtures/compute/shader.slang',
     output: ['compute.h', 'compute.reflection.json'], depfile: 'compute.d',

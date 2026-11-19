@@ -156,6 +156,8 @@
             "storage_image",
             "texture",
             "sampler",
+            "bindless_texture",
+            "bindless_sampler",
             "acceleration_structure"
           ]
         },

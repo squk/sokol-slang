@@ -20,12 +20,18 @@ constexpr int kMaxAccelerationSlots = 4;
 // (sg_make_shader_fragment_storage). This is the only definition of the count.
 constexpr int kMaxFragmentStorageSlots = 4;
 
+// Runtime-sized texture and sampler arrays share a 4-slot bindless namespace
+// (Metal argument buffers, Vulkan descriptor sets 2..5); sokol-utils binds them.
+constexpr int kMaxBindlessSlots = 4;
+
 // Names the slot namespace of a resource. Sokol's view slots are global across
-// stages; acceleration structures and fragment storage images each have their
-// own namespace because Sokol has no bind slot for them.
+// stages; acceleration structures, fragment storage images and bindless tables
+// each have their own namespace because Sokol has no bind slot for them.
 inline std::string bind_space(const std::string &kind, const std::string &stage) {
     if (kind == "uniform" || kind == "sampler" || kind == "acceleration_structure")
         return kind;
+    if (kind == "bindless_texture" || kind == "bindless_sampler")
+        return "bindless";
     if (kind == "storage_image" && stage == "fragment")
         return "fragment_storage_image";
     return "view";
@@ -36,5 +42,6 @@ inline int bind_space_limit(const std::string &space) {
            : space == "sampler"                ? kMaxSamplerBindslots
            : space == "acceleration_structure" ? kMaxAccelerationSlots
            : space == "fragment_storage_image" ? kMaxFragmentStorageSlots
+           : space == "bindless"               ? kMaxBindlessSlots
                                                : kMaxViewBindslots;
 }

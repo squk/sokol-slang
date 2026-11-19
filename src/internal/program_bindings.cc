@@ -64,9 +64,10 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         const std::string kind = resource.data.at("kind");
         const auto space = bind_space(kind, stage);
         Json policy = policies.value(name, Json::object());
-        const std::string field = kind == "texture"   ? "sample_type"
-                                  : kind == "sampler" ? "sampler_type"
-                                                      : "";
+        const std::string field = (kind == "texture" || kind == "bindless_texture") ? "sample_type"
+                                  : (kind == "sampler" || kind == "bindless_sampler")
+                                      ? "sampler_type"
+                                      : "";
         if (!field.empty()) {
             for (const auto &[key, value] : policy.items())
                 if (key != field)
