@@ -16,13 +16,15 @@ python = import('python').find_installation('python3')
 fs = import('fs')
 # iOS and simulator cross files also use Darwin; only macOS has CGL.
 macos_host = host_machine.system() == 'darwin' and meson.get_compiler('cpp').get_define('__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__') != ''
-sokol_tools_dep = subproject('sokol-tools').get_variable('sokol_tools_dep')
+sokol_tools_sp = subproject('sokol-tools')
+sokol_tools_dep = sokol_tools_sp.get_variable('sokol_tools_dep')
 sokol_dep = subproject('sokol').get_variable('sokol_dep')
-tint_dep = subproject('tint').get_variable('tint_dep')
+tint_sp = subproject('tint')
+tint_dep = tint_sp.get_variable('tint_dep')
 json_dep = subproject('json').get_variable('json_dep')
 manifest_schema = custom_target('manifest-schema', input: 'schema/manifest.schema.json',
   output: 'manifest_schema.h', command: [python, files('tools/embed_schema.py'), '@INPUT@', '@OUTPUT@'])
-compiler_threads_dep = dependency('threads', native: true)
+compiler_threads_dep = dependency('threads')
 # Headers sit beside their sources. Those at the top of src/ are the library's
 # interface: backend_compile.h, manifest.h, slang_compile.h and program_compile.h.
 # Everything in src/internal/ serves the libraries, the sokol-spirv tool and the
@@ -32,14 +34,13 @@ backend_compiler = static_library('sokol-slang-backend', 'src/backend_compile.cc
   'src/internal/compiler_stack.cc', 'src/internal/storage_elements.cc', 'src/internal/position_invariance.cc',
   'src/manifest.cc', 'src/internal/program_bindings.cc', 'src/internal/native_bytecode.cc', manifest_schema,
   include_directories: src_inc,
-  dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep],
-  native: true)
+  dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep])
 backend_compiler_dep = declare_dependency(link_with: backend_compiler,
   include_directories: src_inc,
   dependencies: [sokol_tools_dep, sokol_dep.partial_dependency(includes: true), tint_dep, json_dep, compiler_threads_dep])
 
 
-# Export build-machine tools to consumers without adding rendering fixtures.
+# Export compiler tools to consumers without adding rendering fixtures.
 # The compiler reads Sokol declarations; it must not link the parent's runtime.
 slang_frontend = files('tools/sokol-slang')
 if get_option('slang')
@@ -49,41 +50,85 @@ if get_option('slang')
       slang_sdk_root = fs.parent(fs.parent(slangc.full_path()))
       slang_sdk_dep = declare_dependency(
         include_directories: include_directories(slang_sdk_root / 'include'),
-        dependencies: meson.get_compiler('cpp', native: true).find_library('slang', dirs: slang_sdk_root / 'lib'))
+        dependencies: meson.get_compiler('cpp').find_library('slang', dirs: slang_sdk_root / 'lib'))
     endif
   else
-    slang_platform = build_machine.system() == 'darwin' ? 'macos' : build_machine.system()
-    slang_cpu = build_machine.cpu_family()
+    slang_platform = host_machine.system() == 'darwin' ? 'macos' : host_machine.system()
+    slang_cpu = host_machine.cpu_family()
     if not ['macos', 'linux', 'windows'].contains(slang_platform) or not ['x86_64', 'aarch64'].contains(slang_cpu)
-      error('No pinned Slang package for this build machine. Set -Dslangc=/path/to/slangc (2026.20).')
+      error('No pinned Slang package for this compiler target. Set -Dslangc=/path/to/slangc (2026.20).')
     endif
     slang_sdk = subproject('slang-' + slang_platform + '-' + slang_cpu)
-    slangc = slang_sdk.get_variable('slangc')
+    if not meson.is_cross_build()
+      slangc = slang_sdk.get_variable('slangc')
+    endif
     slang_sdk_dep = slang_sdk.get_variable('slang_sdk_dep')
+    slang_sdk_root = slang_sdk.get_variable('slang_sdk_root')
   endif
 endif
-# The CLI and native editor/tool callers share the build-machine Slang library.
-# Cross-built players consume cooked data and never link this dependency.
+# The tool and library target the machine chosen by the parent subproject call.
 if get_option('compiler_library') and get_option('slang')
+  # Deploy the SDK library alongside clients that link program_compiler_dep.
+  if host_machine.system() == 'windows'
+    compiler_runtime_files = [slang_sdk_root / 'bin/slang.dll', slang_sdk_root / 'bin/slang-compiler.dll']
+  else
+    sdk_library = host_machine.system() == 'darwin' ? 'libslang.dylib' : 'libslang.so'
+    compiler_runtime_files = [run_command(python, '-c', 'import os,sys; print(os.path.realpath(sys.argv[1]))',
+      slang_sdk_root / 'lib' / sdk_library, check: true).stdout().strip()]
+  endif
   source_compiler = static_library('sokol-slang-source', 'src/slang_compile.cc',
-    dependencies: slang_sdk_dep, native: true)
+    dependencies: slang_sdk_dep)
   source_compiler_dep = declare_dependency(link_with: source_compiler,
     include_directories: src_inc, dependencies: slang_sdk_dep)
   program_compiler = static_library('sokol-slang-program', 'src/program_compile.cc',
-    dependencies: [source_compiler_dep, backend_compiler_dep], native: true)
+    dependencies: [source_compiler_dep, backend_compiler_dep])
   program_compiler_dep = declare_dependency(link_with: program_compiler,
     include_directories: src_inc,
     dependencies: [source_compiler_dep, backend_compiler_dep])
 endif
 core_dependencies = [backend_compiler_dep]
 core_defines = []
-if get_option('compiler_library') and get_option('slang')
-  core_dependencies += source_compiler_dep
-  core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
+if meson.is_cross_build()
+  sokol_tools_native_dep = sokol_tools_sp.get_variable('sokol_tools_native_dep')
+  tint_native_dep = tint_sp.get_variable('tint_native_dep')
+  compiler_threads_native_dep = dependency('threads', native: true)
+  backend_compiler_native_deps = [
+    sokol_tools_native_dep,
+    sokol_dep.partial_dependency(includes: true),
+    tint_native_dep,
+    json_dep,
+    compiler_threads_native_dep,
+  ]
+  backend_compiler_native = static_library('sokol-slang-backend-native', 'src/backend_compile.cc',
+    'src/internal/compiler_stack.cc', 'src/internal/storage_elements.cc', 'src/internal/position_invariance.cc',
+    'src/manifest.cc', 'src/internal/program_bindings.cc', 'src/internal/native_bytecode.cc', manifest_schema,
+    include_directories: src_inc, dependencies: backend_compiler_native_deps, native: true)
+  backend_compiler_native_dep = declare_dependency(link_with: backend_compiler_native,
+    include_directories: src_inc, dependencies: backend_compiler_native_deps)
+  core_dependencies = [backend_compiler_native_dep]
+  if get_option('compiler_library') and get_option('slang')
+    build_platform = build_machine.system() == 'darwin' ? 'macos' : build_machine.system()
+    build_cpu = build_machine.cpu_family()
+    slang_native_sdk = subproject('slang-' + build_platform + '-' + build_cpu, native: true)
+    slang_native_sdk_dep = slang_native_sdk.get_variable('slang_sdk_dep')
+    source_compiler_native = static_library('sokol-slang-source-native', 'src/slang_compile.cc',
+      dependencies: slang_native_sdk_dep, native: true)
+    source_compiler_native_dep = declare_dependency(link_with: source_compiler_native,
+      include_directories: src_inc, dependencies: slang_native_sdk_dep)
+    core_dependencies += source_compiler_native_dep
+    core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
+  endif
+  core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
+    cpp_args: core_defines, native: true, install: false)
+else
+  if get_option('compiler_library') and get_option('slang')
+    core_dependencies += source_compiler_dep
+    core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
+  endif
+  core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
+    cpp_args: core_defines,
+    install: not meson.is_subproject())
 endif
-core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
-  cpp_args: core_defines, native: true,
-  install: not meson.is_subproject() and not meson.is_cross_build())
 
 if meson.is_subproject()
   subdir_done()

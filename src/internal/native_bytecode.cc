@@ -9,16 +9,17 @@ std::vector<std::string> metal_compile_arguments(shdc::Slang::Enum target,
                                                  const std::filesystem::path &object,
                                                  const std::vector<std::string> &extra) {
     const bool macos = target == shdc::Slang::METAL_MACOS;
-    // SPIRV-Cross includes metal_raytracing only for ray query shaders. Those need
-    // Metal 2.4 (macOS 12, iOS 15).
-    const bool ray_query = source.find("metal_raytracing") != std::string::npos;
+    // SPIRV-Cross emits these tokens only for programs that need Metal 2.4
+    // (macOS 12, iOS 15). Other programs retain the Metal 2.1 target.
+    const bool metal24 = source.find("metal_raytracing") != std::string::npos ||
+                         source.find("atomic_ulong") != std::string::npos;
     const std::string triple =
-        macos ? (ray_query ? "air64-apple-macos12.0" : "air64-apple-macos10.14")
+        macos ? (metal24 ? "air64-apple-macos12.0" : "air64-apple-macos10.14")
         : target == shdc::Slang::METAL_IOS
-            ? (ray_query ? "air64-apple-ios15.0" : "air64-apple-ios12.0")
-            : "air64-apple-ios13.0-simulator";
+            ? (metal24 ? "air64-apple-ios15.0" : "air64-apple-ios12.0")
+            : (metal24 ? "air64-apple-ios15.0-simulator" : "air64-apple-ios13.0-simulator");
     const std::string standard =
-        std::string(macos ? "-std=macos-metal2." : "-std=ios-metal2.") + (ray_query ? "4" : "1");
+        std::string(macos ? "-std=macos-metal2." : "-std=ios-metal2.") + (metal24 ? "4" : "1");
     // SPIRV-Cross can leave unused constants and uninitialized variables in generated MSL.
     // Callers can suppress all warnings with an explicit -w argument; errors still fail the call.
     std::vector<std::string> command{"-target",

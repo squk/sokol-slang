@@ -1,0 +1,64 @@
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -10513,8 +10513,40 @@
+ 	else
+ 		use_native_image_atomic = false;
+ 
+-	if (type.width == 64)
+-		SPIRV_CROSS_THROW("MSL currently does not support 64-bit atomics.");
++	// Metal 2.4 supports only non-fetching unsigned 64-bit buffer min/max.
++	// GPU family support remains a runtime check.
++	const bool nonfetching_uint64 = type.width == 64;
++	if (nonfetching_uint64)
++	{
++		if (!(type.basetype == SPIRType::UInt64 && ptr_type.storage == StorageClassStorageBuffer &&
++		      (opcode == OpAtomicUMax || opcode == OpAtomicUMin) && msl_options.supports_msl_version(2, 4)))
++			SPIRV_CROSS_THROW("MSL 64-bit atomics require unsigned storage-buffer min/max and MSL 2.4.");
++
++		// Prove that no function reads the result before dropping it. Scanning all
++		// operands also catches phi and return uses. A literal equal to result_id
++		// may conservatively reject a shader, but cannot hide a real result use.
++		bool in_function = false;
++		for (size_t offset = 5; offset < ir.spirv.size();)
++		{
++			const uint32_t count = ir.spirv[offset] >> 16;
++			if (!count || count > ir.spirv.size() - offset)
++				SPIRV_CROSS_THROW("Cannot prove that the 64-bit atomic result is unused.");
++			const auto instruction_opcode = Op(ir.spirv[offset] & 0xffff);
++			if (instruction_opcode == OpFunction)
++				in_function = true;
++			const bool defines_result = instruction_opcode == opcode && count > 2 &&
++			                            ir.spirv[offset + 2] == result_id;
++			if (in_function && !defines_result)
++				for (uint32_t i = 1; i < count; i++)
++					if (ir.spirv[offset + i] == result_id)
++						SPIRV_CROSS_THROW("MSL unsigned 64-bit atomic min/max cannot return the previous value.");
++			if (instruction_opcode == OpFunctionEnd)
++				in_function = false;
++			offset += count;
++		}
++		op = opcode == OpAtomicUMax ? "atomic_max" : "atomic_min";
++	}
++	const bool returns_result = !nonfetching_uint64 && strcmp(op, "atomic_store") != 0;
+ 
+ 	auto remapped_type = type;
+ 	remapped_type.basetype = expected_type;
+@@ -10748,7 +10780,7 @@
+ 		if (check_discard)
+ 		{
+ 			exp += " : ";
+-			if (strcmp(op, "atomic_store") != 0)
++			if (returns_result)
+ 				exp += join(type_to_glsl(get<SPIRType>(result_type)), "{}");
+ 			else
+ 				exp += "((void)0)";
+@@ -10758,7 +10790,7 @@
+ 		if (expected_type != type.basetype)
+ 			exp = bitcast_expression(type, expected_type, exp);
+ 
+-		if (strcmp(op, "atomic_store") != 0)
++		if (returns_result)
+ 			emit_op(result_type, result_id, exp, false);
+ 		else
+ 			statement(exp, ";");

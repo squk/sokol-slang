@@ -46,6 +46,24 @@ struct ParsedModule : Compiler {
 // the validated module instead. Never emit shader code from this filtered copy.
 struct ReflectionCompiler : CompilerGLSL {
     using CompilerGLSL::CompilerGLSL;
+    // Inspect the selected entry and its calls, not unused functions or declared
+    // capabilities that another program in the source module may need.
+    bool uses_uint64_atomic_minmax() const {
+        struct Handler final : OpcodeHandler {
+            const Compiler &compiler;
+            bool found = false;
+            explicit Handler(const Compiler &compiler) : compiler(compiler) {}
+            bool handle(spv::Op opcode, const uint32_t *args, uint32_t) override {
+                if (opcode == spv::OpAtomicUMax || opcode == spv::OpAtomicUMin) {
+                    const auto &type = compiler.get_type(args[0]);
+                    found = type.basetype == SPIRType::UInt64 && type.width == 64;
+                }
+                return !found;
+            }
+        } handler(*this);
+        traverse_all_reachable_opcodes(get<SPIRFunction>(ir.default_entry_point), handler);
+        return handler.found;
+    }
     void omit_resource(uint32_t id) {
         auto &variables = ir.ids_for_type[TypeVariable];
         variables.erase(std::remove(variables.begin(), variables.end(), ID(id)), variables.end());
@@ -788,7 +806,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         throw std::runtime_error(
             std::string(Slang::to_str(target)) +
             ": compute requires glsl430, glsl310es, hlsl5, Metal, WGSL or Vulkan");
-    CompilerGLSL analysis(words);
+    ReflectionCompiler analysis(words);
     name_resources(analysis, stage_name, metadata);
     const auto expected_stage = compute                               ? spv::ExecutionModelGLCompute
                                 : shader_stage == ShaderStage::Vertex ? spv::ExecutionModelVertex
@@ -1058,8 +1076,9 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         CompilerMSL::Options options;
         options.platform =
             target == Slang::METAL_MACOS ? CompilerMSL::Options::macOS : CompilerMSL::Options::iOS;
-        // Metal intersection queries need MSL 2.4.
-        options.set_msl_version(2, ray_query ? 4 : 1);
+        // Ray queries and unsigned 64-bit atomic buffer min/max need MSL 2.4.
+        // Other programs retain MSL 2.1, including unused atomic declarations.
+        options.set_msl_version(2, ray_query || analysis.uses_uint64_atomic_minmax() ? 4 : 1);
         // Sokol's Metal backend supports base-vertex and base-instance draws.
         options.ios_support_base_vertex_instance = true;
         options.enable_decoration_binding = true;

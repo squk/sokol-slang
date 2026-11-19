@@ -154,6 +154,17 @@ invalid types, and binding collisions are errors.
   Only Metal (macOS, iOS) and Vulkan targets accept them; any other target in
   `--targets` is an error. Compile Slang with `--profile spirv_1_4` or later and
   `--capability spvRayQueryKHR`. SPIRV-Cross lowers ray query to MSL 2.4.
+- Metal unsigned 64-bit atomic buffer min/max: Slang needs
+  `--capability spvInt64Atomics`. Only reachable `OpAtomicUMax` and
+  `OpAtomicUMin` on `uint64` storage-buffer elements select MSL 2.4; ordinary
+  programs retain MSL 2.1. Metal uses non-fetching `atomic_max_explicit` and
+  `atomic_min_explicit`; a consumed previous value is rejected. The conservative
+  result-use check also rejects function operands whose literal equals the result
+  ID. Signed operations, other 64-bit atomics and other address spaces remain
+  unsupported. Storage records can contain unsigned
+  64-bit scalar fields; the C header emits `uint64_t` with reflected 8-byte
+  alignment. The caller must check GPU support before
+  selecting such a program; a successful shader compile is not a device check.
 - Fragment storage images: Sokol allows storage images only in compute
   shaders, so a fragment stage's storage images (kind `storage_image`, stage
   `fragment`) use their own slot namespace 0..3 and stay out of the

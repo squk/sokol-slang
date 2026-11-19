@@ -4,3 +4,4 @@ source_url = https://codeload.github.com/floooh/sokol-tools/tar.gz/f1dcd178743c6
 source_filename = sokol-tools-proof.tar.gz
 source_hash = 845e3e2b0e7e73f31c322e78732f5d7f2e2149a165c1baf326bbdef26a843f0f
 patch_directory = sokol-tools
+diff_files = sokol-tools/0001-uint64-storage-fields.patch

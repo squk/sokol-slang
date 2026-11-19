@@ -1,0 +1,80 @@
+diff --git a/src/shdc/types/reflection/type.h b/src/shdc/types/reflection/type.h
+--- a/src/shdc/types/reflection/type.h
++++ b/src/shdc/types/reflection/type.h
+@@ -36,6 +36,7 @@
+         Mat4x2,
+         Mat4x3,
+         Mat4x4,
++        UInt64,
+         Struct,
+     };
+     std::string name;
+@@ -142,6 +143,8 @@
+         case Mat4x3:
+         case Mat4x4:
+             return Float;
++        case UInt64:
++            return UInt64;
+         case Struct:
+             return Struct;
+         default:
+@@ -179,6 +182,7 @@
+         case Mat4x2:    return "Mat4x2";
+         case Mat4x3:    return "Mat4x3";
+         case Mat4x4:    return "Mat4x4";
++        case UInt64:    return "UInt64";
+         case Struct:    return "Struct";
+         default:        return "INVALID";
+     }
+@@ -198,6 +202,7 @@
+         case Int2:      return "ivec2";
+         case Int3:      return "ivec3";
+         case Int4:      return "ivec4";
++        case UInt64:    return "uint64_t";
+         case UInt:      return "uint";
+         case UInt2:     return "uvec2";
+         case UInt3:     return "uvec3";
+diff --git a/src/shdc/reflection.cc b/src/shdc/reflection.cc
+--- a/src/shdc/reflection.cc
++++ b/src/shdc/reflection.cc
+@@ -640,6 +640,10 @@
+             case SPIRType::UInt:
+                 out.type = uint_types[col_idx][vec_idx];
+                 break;
++            case SPIRType::UInt64:
++                if (col_idx == 0 && vec_idx == 0)
++                    out.type = Type::UInt64;
++                break;
+             case SPIRType::Float:
+                 out.type = float_types[col_idx][vec_idx];
+                 break;
+@@ -663,7 +667,9 @@
+         out.size = (int) compiler.get_declared_struct_size_runtime_array(item_base_type, 1);
+     } else {
+         out.size = (int) compiler.get_declared_struct_member_size(base_type, item_index);
+-        if (item_base_type.vecsize == 3) {
++        if (out.type == Type::UInt64) {
++            out.align = 8;
++        } else if (item_base_type.vecsize == 3) {
+             out.align = 4 * 4;
+         } else {
+             out.align = 4 * item_base_type.vecsize;
+diff --git a/src/shdc/generators/sokolc.cc b/src/shdc/generators/sokolc.cc
+--- a/src/shdc/generators/sokolc.cc
++++ b/src/shdc/generators/sokolc.cc
+@@ -182,6 +182,7 @@
+                     case Type::Int2:    l("int32_t {}[2];\n", item.name); break;
+                     case Type::Int3:    l("int32_t {}[3];\n", item.name); break;
+                     case Type::Int4:    l("int32_t {}[4];\n", item.name); break;
++                    case Type::UInt64:  l("uint64_t {};\n", item.name); break;
+                     case Type::UInt:    l("uint32_t {};\n", item.name); break;
+                     case Type::UInt2:   l("uint32_t {}[2];\n", item.name); break;
+                     case Type::UInt3:   l("uint32_t {}[3];\n", item.name); break;
+@@ -215,6 +216,7 @@
+                     case Type::Int2:    l("int32_t {}[{}][2];\n", item.name, item.array_count); break;
+                     case Type::Int3:    l("int32_t {}[{}][3];\n", item.name, item.array_count); break;
+                     case Type::Int4:    l("int32_t {}[{}][4];\n", item.name, item.array_count); break;
++                    case Type::UInt64:  l("uint64_t {}[{}];\n", item.name, item.array_count); break;
+                     case Type::UInt:    l("uint32_t {}[{}];\n", item.name, item.array_count); break;
+                     case Type::UInt2:   l("uint32_t {}[{}][2];\n", item.name, item.array_count); break;
+                     case Type::UInt3:   l("uint32_t {}[{}][3];\n", item.name, item.array_count); break;
