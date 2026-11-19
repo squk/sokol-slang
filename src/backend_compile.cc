@@ -1237,6 +1237,12 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         options.enable_decoration_binding = true;
         compiler.set_msl_options(options);
         result.source_code = compiler.compile();
+        if (compiler.needs_buffer_size_buffer()) {
+            throw std::runtime_error(std::string(Slang::to_str(target)) +
+                                     ": storage buffer GetDimensions() requires Metal "
+                                     "spvBufferSizeConstants, which sokol_gfx does not bind; pass "
+                                     "buffer capacity in a uniform or header word instead");
+        }
         native_entry = compiler.get_cleansed_entry_point_name(entries[0].name, expected_stage);
     } else if (Slang::is_hlsl(target)) {
         CompilerHLSL compiler(words);
