@@ -91,6 +91,10 @@ static refl::StoragePixelFormat::Enum reflection_storage_format(const SPIRType &
         return Format::RGBA16SI;
     case spv::ImageFormatRgba16f:
         return Format::RGBA16F;
+    case spv::ImageFormatR16ui:
+        return Format::R16UI;
+    case spv::ImageFormatR11fG11fB10f:
+        return Format::RG11B10F;
     case spv::ImageFormatR32ui:
         return Format::R32UI;
     case spv::ImageFormatR32i:
@@ -234,6 +238,10 @@ static std::string storage_image_format(const SPIRType &type) {
         return "rgba16i";
     case spv::ImageFormatRgba16f:
         return "rgba16f";
+    case spv::ImageFormatR16ui:
+        return "r16ui";
+    case spv::ImageFormatR11fG11fB10f:
+        return "rg11b10f";
     case spv::ImageFormatR32ui:
         return "r32ui";
     case spv::ImageFormatR32i:

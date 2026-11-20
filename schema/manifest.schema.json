@@ -198,6 +198,8 @@
             "rgba16ui",
             "rgba16i",
             "rgba16f",
+            "r16ui",
+            "rg11b10f",
             "r32ui",
             "r32i",
             "r32f",
