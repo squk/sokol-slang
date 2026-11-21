@@ -7,13 +7,16 @@ StructuredBuffer<int2> pairs;
 ByteAddressBuffer rawInput;
 RWByteAddressBuffer rawOutput;
 RWStructuredBuffer<uint> counts;
+// Metal cannot query a storage buffer's length under sokol_gfx (no spvBufferSizeConstants), so the
+// element count comes in as a uniform (signed: GL uniform uploads take no unsigned integers).
+cbuffer params {
+    int colorCount;
+};
 
 [shader("compute")]
 [numthreads(32, 1, 1)]
 void computeMain(uint3 id : SV_DispatchThreadID) {
-    uint count, stride;
-    colors.GetDimensions(count, stride);
-    if (id.x >= count)
+    if (id.x >= uint(colorCount))
         return;
     float4 color = colors[id.x];
     float3 offset = offsets[id.x];

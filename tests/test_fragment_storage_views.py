@@ -41,8 +41,12 @@ float4 fragmentMain(float4 position : SV_Position) : SV_Target0 {
                 "--source",
                 "--module",
                 "full_views",
-                "--program",
-                "raster:vertexMain:fragmentMain",
+                # One program: --program NAME:ENTRIES would make a program set, whose
+                # reflection is keyed by program name instead of holding "layout".
+                "--vertex",
+                "vertexMain",
+                "--fragment",
+                "fragmentMain",
                 "--targets",
                 "metal_macos:spirv_vk",
                 "--output",

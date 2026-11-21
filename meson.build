@@ -131,8 +131,16 @@ else
     core_dependencies += source_compiler_dep
     core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
   endif
+  # The installed tool loads the Slang SDK library, which the SDK subproject installs to libdir
+  # (subprojects/packagefiles/slang); the build tree keeps the SDK path. Windows finds DLLs beside
+  # the executable.
+  core_install_rpath = ''
+  if get_option('compiler_library') and get_option('slang') and host_machine.system() != 'windows'
+    core_install_rpath = ((host_machine.system() == 'darwin' ? '@loader_path' : '$ORIGIN') / '..' /
+      get_option('libdir'))
+  endif
   core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
-    cpp_args: core_defines,
+    cpp_args: core_defines, install_rpath: core_install_rpath,
     install: not meson.is_subproject())
 endif
 
