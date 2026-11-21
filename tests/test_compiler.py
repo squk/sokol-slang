@@ -122,6 +122,12 @@ def main():
         assert len(buffers) == 9
         assert {b["binding"] for b in buffers} == set(range(8, 17))
         run(buffer_shader(16), options, error="storage buffers 16/15")
+        # Vulkan and D3D11 take storage buffers up to the view slots; sokol_gfx checks the
+        # device's own limit. GL, GLES and WebGPU keep the portable eight.
+        run(buffer_shader(9), options, extra_args=["--targets", "spirv_vk:hlsl5"])
+        run(
+            buffer_shader(9), options, extra_args=["--targets", "wgsl"], error="storage buffers 9/8"
+        )
         unsigned_source = (root / "tests/shaders/unsigned_uniforms.slang").read_text()
         run(
             unsigned_source,

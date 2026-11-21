@@ -22,6 +22,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -916,6 +917,73 @@ static uint32_t prepare_glsl(CompilerGLSL &compiler, bool combine_image_samplers
     return dummy_sampler;
 }
 
+// FXC packs varyings by their order in the declaring struct, and Direct3D links
+// the fragment stage to the vertex stage by register. SPIRV-Cross drops vertex
+// outputs the fragment stage never reads, so the fragment stage packs the
+// remaining ones into different registers and reads the wrong values. Declare
+// the unconsumed vertex outputs, in location order, in the fragment input
+// struct. The entry point never reads them; FXC still gives them registers.
+static void declare_unconsumed_hlsl_varyings(const std::string &vertex, std::string &fragment) {
+    static const std::regex member(R"(^\s*((?:\w+ )*\w+ \w+) : TEXCOORD(\d+);\s*$)");
+    auto struct_body = [](const std::string &text, const char *name, size_t &begin, size_t &end) {
+        const size_t at = text.find(name);
+        if (at == std::string::npos)
+            return false;
+        begin = text.find('{', at) + 1;
+        end = text.find("};", begin);
+        return end != std::string::npos;
+    };
+    // Members of a struct body, without the empty line after "{" and the indent before "}".
+    auto lines_of = [](const std::string &body) {
+        std::vector<std::string> lines;
+        std::istringstream stream(body);
+        for (std::string line; std::getline(stream, line);)
+            if (line.find_first_not_of(" \t\r") != std::string::npos)
+                lines.push_back(line);
+        return lines;
+    };
+    size_t vertex_begin, vertex_end, fragment_begin, fragment_end;
+    if (!struct_body(vertex, "struct SPIRV_Cross_Output", vertex_begin, vertex_end) ||
+        !struct_body(fragment, "struct SPIRV_Cross_Input", fragment_begin, fragment_end))
+        return;
+    std::map<int, std::string> outputs;
+    for (const auto &line : lines_of(vertex.substr(vertex_begin, vertex_end - vertex_begin))) {
+        std::smatch match;
+        if (std::regex_match(line, match, member))
+            outputs[std::stoi(match[2])] = line;
+    }
+    auto inputs = lines_of(fragment.substr(fragment_begin, fragment_end - fragment_begin));
+    std::set<int> consumed;
+    for (const auto &line : inputs) {
+        std::smatch match;
+        if (std::regex_match(line, match, member))
+            consumed.insert(std::stoi(match[2]));
+    }
+    for (const auto &[index, line] : outputs) {
+        if (consumed.count(index))
+            continue;
+        // Insert before the first declared varying with a higher index, else after the last.
+        size_t position = 0;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            std::smatch match;
+            if (!std::regex_match(inputs[i], match, member))
+                continue;
+            position = i + 1;
+            if (std::stoi(match[2]) > index) {
+                position = i;
+                break;
+            }
+        }
+        inputs.insert(inputs.begin() + position, line);
+    }
+    const size_t indent_begin = fragment.rfind('\n', fragment_end) + 1;
+    const std::string indent = fragment.substr(indent_begin, fragment_end - indent_begin);
+    std::string body = "\n";
+    for (const auto &line : inputs)
+        body += line + "\n";
+    fragment.replace(fragment_begin, fragment_end - fragment_begin, body + indent);
+}
+
 static SpirvcrossSource translate(const Input &input, int index, std::vector<uint32_t> words,
                                   const std::map<std::string, Binding> &metadata,
                                   std::set<std::string> &used, Json &report, Json &stage_spirv,
@@ -1153,10 +1221,15 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
     // in a vertex stage that also binds bindless argument buffers at 19..22).
     const bool metal =
         target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::METAL_SIM;
+    // Vulkan and D3D11 storage buffers are views too: sokol_gfx takes the device's
+    // limit there (maxPerStageDescriptorStorageBuffers; 64 on D3D11), clamped to the
+    // view slots, and sg_make_shader rejects a shader over it. Only GL, GLES and
+    // WebGPU need the portable eight.
     const size_t storage_buffer_limit =
-        metal ? 31 - SG_MAX_VERTEXBUFFER_BINDSLOTS - SG_MAX_UNIFORMBLOCK_BINDSLOTS -
-                    (shader_stage == ShaderStage::Vertex && has_bindless ? kMaxBindlessSlots : 0)
-              : SG_MAX_PORTABLE_STORAGEBUFFER_BINDINGS_PER_STAGE;
+        metal          ? 31 - SG_MAX_VERTEXBUFFER_BINDSLOTS - SG_MAX_UNIFORMBLOCK_BINDSLOTS -
+                             (shader_stage == ShaderStage::Vertex && has_bindless ? kMaxBindlessSlots : 0)
+        : native_views ? MaxViews
+                       : SG_MAX_PORTABLE_STORAGEBUFFER_BINDINGS_PER_STAGE;
     const size_t regular_textures = resources.separate_images.size() - bindless_texture_count;
     const size_t regular_samplers = resources.separate_samplers.size() - bindless_sampler_count;
     if (resources.uniform_buffers.size() > MaxUniformBlocks ||
@@ -1895,6 +1968,8 @@ GeneratedProgram generate_program(const Manifest &manifest,
                 if (in.slot < 0)
                     out = refl::StageAttr{};
             }
+        if (!compute && Slang::is_hlsl(target))
+            declare_unconsumed_hlsl_varyings(sources[0].source_code, sources[1].source_code);
         if (!options.count("--source"))
             compile_native_bytecode(
                 bytecode[target], translated[target], target, native_work,
