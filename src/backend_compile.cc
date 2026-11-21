@@ -274,23 +274,47 @@ static std::string storage_image_access(const Compiler &compiler, const Resource
 }
 
 // Sokol has no bind slot for acceleration structures. A manifest slot (0..3)
-// maps to a native index placed clear of every other resource: Metal buffers
-// 0..7 hold uniform blocks and 8..15 storage buffers, so these start at 16;
-// Vulkan set 1 uses one binding per view slot, then one per sampler slot, so
-// the base is the view count plus the sampler count of the sokol_gfx.h used here.
+// maps to a native index placed clear of every other resource. Metal buffers
+// 0..7 hold uniform blocks and storage buffers follow from 8 in declaration
+// order (sokol-shdc's BindSlotMap::allocate_backend_slots), so these start after
+// the program's last compute storage buffer, and never below 16; they must end
+// before the bindless argument buffers at MslBindlessBufferBase. Vulkan set 1
+// uses one binding per view slot, then one per sampler slot, so the base is the
+// view count plus the sampler count of the sokol_gfx.h used here.
 // The layout reports the final numbers per slot; runtimes must use those.
 // Ray query is available only in compute shaders on Metal and Vulkan.
+static constexpr int MslStorageBufferBase = 8;
 static constexpr int MslAccelerationBufferBase = 16;
+static constexpr int MslBindlessBufferBase = 23;
 static constexpr int SpirvAccelerationBindingBase = kMaxViewBindslots + kMaxSamplerBindslots;
 
 static bool supports_ray_query(Slang::Enum target) {
     return target == Slang::METAL_MACOS || target == Slang::METAL_IOS || target == Slang::SPIRV_VK;
 }
 
+// The Metal buffer index of acceleration structure slot 0 for a program's bindings.
+static int msl_acceleration_base(const std::map<std::string, Binding> &bindings) {
+    int storage_buffers = 0;
+    for (const auto &[name, binding] : bindings)
+        if (binding.kind == "storage_buffer" && binding.stage == "compute")
+            ++storage_buffers;
+    return std::max(MslAccelerationBufferBase, MslStorageBufferBase + storage_buffers);
+}
+
 // Returns -1 for targets that cannot bind an acceleration structure.
-static int acceleration_native_index(Slang::Enum target, int slot) {
-    if (Slang::is_msl(target))
-        return MslAccelerationBufferBase + slot;
+static int acceleration_native_index(Slang::Enum target, int slot,
+                                     const std::map<std::string, Binding> &bindings) {
+    if (Slang::is_msl(target)) {
+        const int index = msl_acceleration_base(bindings) + slot;
+        if (index >= MslBindlessBufferBase)
+            throw std::runtime_error("acceleration structure slot " + std::to_string(slot) +
+                                     " needs Metal buffer " + std::to_string(index) +
+                                     ", past the compute storage buffers and into the "
+                                     "bindless argument buffers at " +
+                                     std::to_string(MslBindlessBufferBase) +
+                                     "; use fewer storage buffers");
+        return index;
+    }
     if (target == Slang::SPIRV_VK)
         return SpirvAccelerationBindingBase + slot;
     return -1;
@@ -329,7 +353,6 @@ static int fragment_storage_native_index(Slang::Enum target, int slot) {
 //   argument buffers use 19..22 and cap vertex storage buffers at 11 (8..18).
 // - Vulkan places slot s in descriptor set (2 + s), binding 0, clear of set 0
 //   (uniform blocks) and set 1 (views, samplers, accel, fragment storage).
-static constexpr int MslBindlessBufferBase = 23;
 static constexpr int MslVertexBindlessBufferBase = 19;
 static constexpr int SpirvBindlessSetBase = 2;
 
@@ -1175,7 +1198,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         for (const auto &resource : resources.acceleration_structures) {
             compiler.set_decoration(
                 resource.id, spv::DecorationBinding,
-                acceleration_native_index(target, metadata.at(resource.name).slot));
+                acceleration_native_index(target, metadata.at(resource.name).slot, metadata));
             compiler.set_decoration(resource.id, spv::DecorationDescriptorSet,
                                     Slang::is_spirv(target) ? 1 : 0);
         }
@@ -1618,7 +1641,8 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
             {{"name", resource.name},
              {"kind", "acceleration_structure"},
              {"slot", metadata.at(resource.name).slot},
-             {"binding", acceleration_native_index(target, metadata.at(resource.name).slot)}});
+             {"binding",
+              acceleration_native_index(target, metadata.at(resource.name).slot, metadata)}});
     if (compute)
         report["workgroup_size"] = result.stage_refl.cs_workgroup_size;
     if (shader_stage == ShaderStage::Fragment)
@@ -1701,9 +1725,10 @@ static Json describe_acceleration_structures(const Manifest &manifest) {
                 {{"name", name},
                  {"slot", binding.slot},
                  {"stage", "SG_SHADERSTAGE_COMPUTE"},
-                 {"msl_buffer_n", acceleration_native_index(Slang::METAL_MACOS, binding.slot)},
+                 {"msl_buffer_n",
+                  acceleration_native_index(Slang::METAL_MACOS, binding.slot, manifest.bindings)},
                  {"spirv_set1_binding_n",
-                  acceleration_native_index(Slang::SPIRV_VK, binding.slot)}});
+                  acceleration_native_index(Slang::SPIRV_VK, binding.slot, manifest.bindings)}});
     return list;
 }
 

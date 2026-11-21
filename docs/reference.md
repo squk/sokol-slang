@@ -142,8 +142,11 @@ invalid types, and binding collisions are errors.
   own Sokol slot; source descriptor numbers need not match native bindings.
 - Ray query: a compute stage may bind up to four `RaytracingAccelerationStructure`
   resources (kind `acceleration_structure`, own slot namespace 0..3). Sokol has
-  no slot for them, so the native index is Metal buffer `16 + slot` and Vulkan
+  no slot for them, so the native index is Metal buffer
+  `max(16, 8 + compute storage buffer count) + slot`, after the storage buffers
+  at 8 onward and before the bindless argument buffers at 23, and Vulkan
   set 1 binding `SG_MAX_VIEW_BINDSLOTS + SG_MAX_SAMPLER_BINDSLOTS + slot`.
+  A program whose acceleration structures would reach buffer 23 fails to compile.
   The layout lists each slot in `acceleration_structures` with `name`, `slot`,
   `stage`, `msl_buffer_n` and `spirv_set1_binding_n`. The emitted
   `spirv_set1_binding_n` is authoritative: the Vulkan base depends on the
