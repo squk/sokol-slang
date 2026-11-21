@@ -59,7 +59,11 @@ if get_option('slang')
       error('No pinned Slang package for this compiler target. Set -Dslangc=/path/to/slangc (2026.20).')
     endif
     slang_sdk = subproject('slang-' + slang_platform + '-' + slang_cpu)
-    if not meson.is_cross_build()
+    if meson.is_cross_build()
+      # slangc runs on the build machine, so take it from the build machine's SDK.
+      slangc = subproject('slang-' + (build_machine.system() == 'darwin' ? 'macos' : build_machine.system()) +
+        '-' + build_machine.cpu_family(), native: true).get_variable('slangc')
+    else
       slangc = slang_sdk.get_variable('slangc')
     endif
     slang_sdk_dep = slang_sdk.get_variable('slang_sdk_dep')
@@ -106,6 +110,7 @@ if meson.is_cross_build()
   backend_compiler_native_dep = declare_dependency(link_with: backend_compiler_native,
     include_directories: src_inc, dependencies: backend_compiler_native_deps)
   core_dependencies = [backend_compiler_native_dep]
+  backend_test_dep = backend_compiler_native_dep
   if get_option('compiler_library') and get_option('slang')
     build_platform = build_machine.system() == 'darwin' ? 'macos' : build_machine.system()
     build_cpu = build_machine.cpu_family()
@@ -121,6 +126,7 @@ if meson.is_cross_build()
   core = executable('sokol-spirv', 'src/sokol_spirv.cc', dependencies: core_dependencies,
     cpp_args: core_defines, native: true, install: false)
 else
+  backend_test_dep = backend_compiler_dep
   if get_option('compiler_library') and get_option('slang')
     core_dependencies += source_compiler_dep
     core_defines += '-DSOKOL_SLANG_SOURCE_COMPILER=1'
@@ -162,10 +168,11 @@ compiler_stack_test = executable('test-compiler-stack',
 test('compiler-stack', compiler_stack_test, suite: 'compiler-library')
 position_invariance_test = executable('test-position-invariance', 'tests/test_position_invariance.cc',
   include_directories: src_inc,
-  dependencies: backend_compiler_dep, native: true)
+  dependencies: backend_test_dep, native: true)
 test('position-invariance', position_invariance_test, suite: 'compiler-library')
 
-if get_option('compiler_library') and get_option('slang')
+# Cross builds have no native program_compiler library; these run in the native build.
+if get_option('compiler_library') and get_option('slang') and not meson.is_cross_build()
   program_compile_test = executable('test-program-compile', 'tests/test_program_compile.cc',
     dependencies: program_compiler_dep, native: true)
   test('program-compile', program_compile_test, suite: 'compiler-library', timeout: 60)
@@ -181,6 +188,19 @@ if host_machine.system() == 'windows'
     meson.get_compiler('cpp').find_library('gdi32')]
   d3dcompiler_deps = [meson.get_compiler('cpp').find_library('d3dcompiler'),
     meson.get_compiler('cpp').find_library('dxguid')]
+  app_available = true
+endif
+
+# Vulkan fixtures run on Linux and Windows. On Windows the compiler must find the
+# Khronos headers (cpp_args -I) and the loader's import library vulkan-1 (cpp_link_args -L).
+vulkan_dep = dependency('', required: false)
+if host_machine.system() == 'linux'
+  vulkan_dep = dependency('vulkan', version: '>=1.3', required: false)
+elif host_machine.system() == 'windows'
+  vulkan_loader = meson.get_compiler('cpp').find_library('vulkan-1', required: false)
+  if vulkan_loader.found() and meson.get_compiler('cpp').has_header('vulkan/vulkan.h')
+    vulkan_dep = vulkan_loader
+  endif
 endif
 
 if host_machine.system() == 'linux'
@@ -448,9 +468,10 @@ if not meson.is_cross_build() and (get_option('slang') or glslang.found())
     suite: ['install', 'core-smoke'], is_parallel: false, timeout: 120)
 endif
 
-if host_machine.system() == 'linux'
-  vulkan_dep = dependency('vulkan', version: '>=1.3', required: false)
+if host_machine.system() in ['linux', 'windows']
   if vulkan_dep.found() and app_available
+    # A Windows console build needs sokol_app's main() entry point.
+    vulkan_app_args = host_machine.system() == 'windows' ? ['-DSOKOL_WIN32_FORCE_MAIN'] : []
     vulkan_fixtures = []
     vulkan_readback_shader = []
     if glslang.found()
@@ -474,7 +495,8 @@ if host_machine.system() == 'linux'
     endif
     foreach fixture : vulkan_fixtures
       proof = executable(fixture[0], test_source, fixture[3], vulkan_readback_shader,
-        cpp_args: fixture[1] + ['-DSHADER_HEADER="' + fixture[2] + '"'], dependencies: [sokol_dep, vulkan_dep] + app_deps)
+        cpp_args: fixture[1] + ['-DSHADER_HEADER="' + fixture[2] + '"'] + vulkan_app_args,
+        dependencies: [sokol_dep, vulkan_dep] + app_deps)
       test(fixture[0], proof, suite: fixture[0].startswith('generic-') ? ['core-smoke'] : [])
     endforeach
   endif
@@ -540,6 +562,13 @@ foreach fixture : storage_image_headers
     compiler = executable(fixture[0] + 'hlsl-storage-image-compile', 'tests/hlsl_storage_image_compile.cc', fixture[2],
       cpp_args: ['-DSHADER_HEADER="' + fixture[1] + '"'], dependencies: [sokol_dep] + d3dcompiler_deps)
     test(fixture[0] + 'hlsl-storage-image-compile', compiler)
+    if vulkan_dep.found() and glslang.found()
+      name = fixture[0] + 'vulkan-storage-image'
+      proof = executable(name, test_source, fixture[2], vulkan_readback_shader,
+        cpp_args: ['-DSOKOL_VULKAN', '-DSOKOL_WIN32_FORCE_MAIN', '-DTEST_STORAGE_IMAGE', '-DSHADER_HEADER="' + fixture[1] + '"'],
+        dependencies: [sokol_dep, vulkan_dep] + app_deps)
+      test(name, proof)
+    endif
   endif
 endforeach
 
@@ -639,6 +668,12 @@ foreach group : [['depth', depth_headers], ['varyings', varyings_headers]]
       proof = executable(name, test_source, fixture[2],
         cpp_args: ['-DSOKOL_D3D11', '-DSOKOL_WIN32_FORCE_MAIN'] + fixture_args, dependencies: [sokol_dep, d3d11_dep] + app_deps)
       test(name, proof)
+      if vulkan_dep.found() and glslang.found()
+        name = fixture[0] + 'vulkan' + suffix
+        proof = executable(name, test_source, fixture[2], vulkan_readback_shader,
+          cpp_args: ['-DSOKOL_VULKAN', '-DSOKOL_WIN32_FORCE_MAIN'] + fixture_args, dependencies: [sokol_dep, vulkan_dep] + app_deps)
+        test(name, proof)
+      endif
       if group[0] == 'depth'
         name = fixture[0] + 'hlsl-depth-compile'
         compiler = executable(name, 'tests/hlsl_depth_compile.cc', fixture[2],

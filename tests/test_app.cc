@@ -7,6 +7,7 @@
 #include "readback.h"
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 
 #if defined(TEST_COMPUTE)
 #include "compute_fixture.h"
@@ -43,7 +44,15 @@ static void fail_test(const char *message) {
 
 static void log_message(const char *tag, uint32_t level, uint32_t item, const char *message,
                         uint32_t line, const char *file, void *user) {
-    if (level <= 1)
+#if defined(SOKOL_D3D11)
+    // Machines without the Windows SDK debug layer (for example a VM) fall back to a device without
+    // it.
+    const bool no_debug_layer = std::strcmp(tag, "sapp") == 0 &&
+                                item == SAPP_LOGITEM_WIN32_D3D11_CREATE_DEVICE_WITH_DEBUG_FAILED;
+#else
+    const bool no_debug_layer = false;
+#endif
+    if (level <= 1 && !no_debug_layer)
         ++validation_errors;
     slog_func(tag, level, item, message, line, file, user);
 }
