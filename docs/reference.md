@@ -171,12 +171,16 @@ invalid types, and binding collisions are errors.
 - Fragment storage images: Sokol allows storage images only in compute
   shaders, so a fragment stage's storage images (kind `storage_image`, stage
   `fragment`) use their own slot namespace 0..3 and stay out of the
-  `sg_shader_desc`. The native index is Metal texture `SG_MAX_VIEW_BINDSLOTS +
-  slot` and Vulkan set 1 binding `SG_MAX_VIEW_BINDSLOTS +
-  SG_MAX_SAMPLER_BINDSLOTS + 4 + slot` (after the acceleration structure
-  bindings). The layout lists each slot in `fragment_storage_images` with
+  `sg_shader_desc`. Metal, Vulkan and `hlsl5` (D3D11) accept them. The native
+  index is Metal texture `SG_MAX_VIEW_BINDSLOTS + slot`, Vulkan set 1 binding
+  `SG_MAX_VIEW_BINDSLOTS + SG_MAX_SAMPLER_BINDSLOTS + 4 + slot` (after the
+  acceleration structure bindings), and D3D11 pixel shader register
+  `u(4 + slot)`: the top four of the eight output merger slots every D3D11
+  device has, which leaves up to four color attachments. Raster-ordered
+  (interlocked) programs need Metal or Vulkan; `hlsl5` has no rasterizer-ordered
+  views. The layout lists each slot in `fragment_storage_images` with
   `name`, `slot`, `stage`, `image_type`, `access_format`, `writeonly`,
-  `msl_texture_n` and `spirv_set1_binding_n`, plus
+  `msl_texture_n`, `spirv_set1_binding_n` and `hlsl_register_u_n`, plus
   `max_fragment_storage_slots`. As with acceleration structures, the emitted
   numbers are authoritative. sokol-utils binds them
   (`sg_make_shader_fragment_storage`, `sg_fragment_storage_bind`). Only Metal

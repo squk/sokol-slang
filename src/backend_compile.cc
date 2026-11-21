@@ -325,15 +325,19 @@ static int acceleration_native_index(Slang::Enum target, int slot,
 // has a manifest slot (0..3) of its own and a native index clear of every Sokol
 // view: Metal fragment textures use indices below SG_MAX_VIEW_BINDSLOTS, so
 // these start there (Apple GPUs bind 128 textures per stage); Vulkan set 1
-// places them after the acceleration structure bindings. sokol-utils binds
-// them (sg_make_shader_fragment_storage, sg_fragment_storage_bind) from the
-// layout's fragment_storage_images list.
+// places them after the acceleration structure bindings. D3D11 pixel shader
+// UAVs share the output merger's slots with the render targets, and every
+// device has eight (feature level 11_0), so these take the top four, u4..u7:
+// a pass may then use up to four color attachments. sokol-utils binds them
+// (sg_make_shader_fragment_storage, sg_fragment_storage_bind) from the layout's
+// fragment_storage_images list.
 static constexpr int MslFragmentStorageTextureBase = kMaxViewBindslots;
 static constexpr int SpirvFragmentStorageBindingBase =
     SpirvAccelerationBindingBase + kMaxAccelerationSlots;
+static constexpr int HlslFragmentStorageRegisterBase = 8 - kMaxFragmentStorageSlots;
 
 static bool supports_fragment_storage(Slang::Enum target) {
-    return Slang::is_msl(target) || target == Slang::SPIRV_VK;
+    return Slang::is_msl(target) || target == Slang::SPIRV_VK || target == Slang::HLSL5;
 }
 
 // Returns -1 for targets that cannot bind a fragment storage image.
@@ -342,6 +346,8 @@ static int fragment_storage_native_index(Slang::Enum target, int slot) {
         return MslFragmentStorageTextureBase + slot;
     if (target == Slang::SPIRV_VK)
         return SpirvFragmentStorageBindingBase + slot;
+    if (target == Slang::HLSL5)
+        return HlslFragmentStorageRegisterBase + slot;
     return -1;
 }
 
@@ -860,7 +866,8 @@ Json SokolGenerator::describe_fragment_storage(const std::vector<refl::StorageIm
              {"writeonly", image.writeonly},
              {"msl_texture_n", fragment_storage_native_index(Slang::METAL_MACOS, image.sokol_slot)},
              {"spirv_set1_binding_n",
-              fragment_storage_native_index(Slang::SPIRV_VK, image.sokol_slot)}});
+              fragment_storage_native_index(Slang::SPIRV_VK, image.sokol_slot)},
+             {"hlsl_register_u_n", fragment_storage_native_index(Slang::HLSL5, image.sokol_slot)}});
     return list;
 }
 
@@ -1183,7 +1190,13 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
                     if (!supports_fragment_storage(target))
                         throw std::runtime_error(
                             std::string(Slang::to_str(target)) +
-                            ": fragment storage images require Metal or Vulkan");
+                            ": fragment storage images require Metal, Vulkan or hlsl5");
+                    // Rasterizer-ordered views need shader model 5.1 (D3D12, or D3D11.3
+                    // through ID3D11Device3); hlsl5 is shader model 5.0.
+                    if (Slang::is_hlsl(target) && uses_interlock(analysis))
+                        throw std::runtime_error(
+                            std::string(Slang::to_str(target)) +
+                            ": raster-ordered fragment storage images require Metal or Vulkan");
                     fragment_storage.push_back(
                         {resource.id, resource.name, found->second.slot, qualifier});
                     used.insert(resource.name);
@@ -1446,6 +1459,7 @@ static SpirvcrossSource translate(const Input &input, int index, std::vector<uin
         image.writeonly = (storage.qualifier & BindSlot::WriteOnly) != 0;
         image.msl_texture_n = fragment_storage_native_index(Slang::METAL_MACOS, storage.slot);
         image.spirv_set1_binding_n = fragment_storage_native_index(Slang::SPIRV_VK, storage.slot);
+        image.hlsl_register_u_n = fragment_storage_native_index(Slang::HLSL5, storage.slot);
         fragment_images.push_back(image);
         reflect.omit_resource(storage.id);
     }
