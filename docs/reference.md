@@ -321,8 +321,10 @@ on the capable backends; missing GPU access fails rather than skips native tests
 
 `*varyings*` fixtures verify unused vertex outputs and consumed locations 0/2.
 `*-depth` fixtures verify comparison sampling and attachment transitions.
-Apple compiler and Wine/DXBC checks do not establish device execution:
-**native Windows/D3D11 and iOS/simulator execution remain unverified**.
+Apple compiler and Wine/DXBC checks do not establish device execution.
+`tests/test_windows_vm.sh` runs the D3D11 and Vulkan fixtures in a Windows VM
+(x64 builds under ARM64 emulation; Vulkan on Mesa's lavapipe). Native x64
+Windows hardware and iOS/simulator execution remain unverified.
 
 Tests use `sokol_app`/`sokol_glue` on every backend. Headless Linux runs under
 `xvfb-run -a` with `LIBGL_ALWAYS_SOFTWARE=1`. Native helpers only handle GPU readback.
@@ -355,6 +357,17 @@ Shader limits:
   stores `bool` elements as `int`). Unsupported on `glsl410`, `glsl300es`, and `hlsl4`.
   Vertex-stage access must be read-only. Layout storage buffer entries report
   `struct_name` and `record_size` (the array stride).
+- Storage buffers per stage: 15 on Metal (11 in a vertex stage with bindless
+  tables), up to the 32 Sokol view slots on Vulkan and D3D11 (`sokol_gfx` checks
+  the device's own limit when the shader is made), and the portable 8 on GL,
+  GLES and WebGPU.
+- Storage buffer length queries (`GetDimensions()`, `.getCount()`) are rejected
+  for Metal targets. SPIRV-Cross reads Metal buffer lengths from an extra
+  `spvBufferSizeConstants` buffer, which `sokol_gfx` does not bind, so the query
+  would read garbage. Pass the length in a uniform or a header word instead (see
+  `tests/shaders/storage_elements.slang`). The other backends query lengths
+  natively. Binding the sizes buffer in `sokol_gfx` is tracked in goBot's
+  TASK-1015.
 - Storage images: non-multisampled 2D, 2D array, or 3D, with a schema-listed
   format. Use textures for read-only access and check `sg_query_pixelformat()`
   for device support.
