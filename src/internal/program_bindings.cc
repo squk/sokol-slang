@@ -42,6 +42,8 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
     // so these get their own slot spaces (bind_space). backend_compile.cc maps
     // each slot to a native index clear of every other resource.
     std::map<std::string, std::set<int>> occupied;
+    // Names holding each space's slots, so an overflow error can list them.
+    std::map<std::string, std::vector<std::string>> holders;
     // Reserve every explicit slot first, even if its resource sorts last.
     for (const auto &resource : discovered) {
         const auto found = overrides.find({resource.stage, resource.name});
@@ -55,6 +57,7 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (!occupied[space].insert(found->second).second)
             throw std::runtime_error("duplicate " + space +
                                      " slot; Sokol slots are global across stages");
+        holders[space].push_back(resource.stage + ":" + resource.name);
     }
     Json resources = Json::object();
     Json bindings = Json::array();
@@ -94,9 +97,17 @@ Json resolve_program_bindings(Json &document, const std::filesystem::path &path,
         if (found == overrides.end()) {
             while (occupied[space].count(slot))
                 ++slot;
-            if (slot == bind_space_limit(space))
-                throw std::runtime_error(name + ": exceeds Sokol " + space + " binding limit");
+            if (slot == bind_space_limit(space)) {
+                // List every holder: the fix is to drop one of them, not this resource.
+                std::string list;
+                for (const auto &holder : holders[space])
+                    list += (list.empty() ? "" : ", ") + holder;
+                throw std::runtime_error(name + ": exceeds Sokol " + space + " binding limit of " +
+                                         std::to_string(bind_space_limit(space)) +
+                                         " (holders: " + list + ")");
+            }
             occupied[space].insert(slot);
+            holders[space].push_back(stage + ":" + name);
         }
         merged["names"][stage] = name;
         merged["slots"][stage] = slot;
