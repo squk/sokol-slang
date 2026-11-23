@@ -1,7 +1,6 @@
 [wrap-file]
-directory = sokol-tools-f1dcd178743c62265a4e00a594f7ad13b25dea7f
-source_url = https://codeload.github.com/floooh/sokol-tools/tar.gz/f1dcd178743c62265a4e00a594f7ad13b25dea7f
-source_filename = sokol-tools-proof.tar.gz
-source_hash = 845e3e2b0e7e73f31c322e78732f5d7f2e2149a165c1baf326bbdef26a843f0f
+directory = sokol-tools-bbd946cb9cb9db5c470d45ed402a975706b968f3
+source_url = https://codeload.github.com/floooh/sokol-tools/tar.gz/bbd946cb9cb9db5c470d45ed402a975706b968f3
+source_filename = sokol-tools-bbd946cb9cb9db5c470d45ed402a975706b968f3.tar.gz
+source_hash = 6741734a87b5980d1b73c0f2b297170da63d87ee1c06283bd12c71dd88512ca6
 patch_directory = sokol-tools
-diff_files = sokol-tools/0001-uint64-storage-fields.patch, sokol-tools/0002-extra-storage-pixel-formats.patch
