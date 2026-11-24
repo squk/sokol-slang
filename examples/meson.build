@@ -1,4 +1,4 @@
-# Both examples use the same native window and graphics backend.
+# The apps use the same native window and graphics backend.
 example_c_args = []
 example_deps = [sokol_dep]
 example_available = true
@@ -16,7 +16,13 @@ else
   example_available = false
 endif
 
-foreach example : [['triangle', 'triangle'], ['textured-quad', 'textured_quad']]
+foreach example : [
+  ['triangle', 'triangle'],
+  ['textured-quad', 'textured_quad'],
+  ['instancing', 'instancing'],
+  ['render-to-texture', 'render_to_texture'],
+  ['compute-image', 'compute_image'],
+]
   example_name = example[0]
   example_module = example[1]
   subdir(example_name)
